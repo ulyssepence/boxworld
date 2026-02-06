@@ -7,7 +7,8 @@
     "build": "esbuild src/client.tsx --bundle --minify --outfile=static/client.js",
     "dev": "bun run src/server.ts",
     "watch": "nodemon --watch src --ext '*' --exec 'npm run build && npm run dev'",
-    "format": "prettier --write 'src/**/*.{ts,tsx}'"
+    "format": "prettier --write 'src/**/*.{ts,tsx}'",
+    "generate-models": "node scripts/generate-models.js"
   },
   "dependencies": {
     "howler": "^2.2.4",
@@ -16,6 +17,8 @@
     "three": "^0.182.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "^4.3.0",
+    "@gltf-transform/extensions": "^4.3.0",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@types/express": "^5.0.6",
