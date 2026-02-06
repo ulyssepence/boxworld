@@ -2,7 +2,10 @@ conversations/
 
 # Data
 data/db.sqlite
+data/db.sqlite-shm
+data/db.sqlite-wal
 data/checkpoints/
+visualize/data/db.sqlite
 
 # Python
 __pycache__/
@@ -15,7 +18,18 @@ build/
 
 # Node
 node_modules/
+
+# Build artifacts (esbuild output + onnxruntime-web copied from node_modules)
 visualize/static/client.js
+visualize/static/ort*
+
+# Playwright
+visualize/test-results/
+visualize/playwright-report/
+
+# Tools
+.claude/
+.playwright-mcp/
 
 # OS
 .DS_Store

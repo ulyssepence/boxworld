@@ -36,7 +36,13 @@ function cellColor(cellType: t.CellType): string {
 }
 
 /** Grid floor tiles - rendered as flat planes for each cell */
-export function Grid({ level }: { level: t.Level }) {
+export function Grid({
+  level,
+  onCellClick,
+}: {
+  level: t.Level
+  onCellClick?: (x: number, y: number) => void
+}) {
   const tiles = React.useMemo(() => {
     const result: { x: number; y: number; color: string }[] = []
     for (let y = 0; y < level.height; y++) {
@@ -53,7 +59,19 @@ export function Grid({ level }: { level: t.Level }) {
   return (
     <group>
       {tiles.map((tile, i) => (
-        <mesh key={i} position={[tile.x, 0, tile.y]} rotation={[-Math.PI / 2, 0, 0]}>
+        <mesh
+          key={i}
+          position={[tile.x, 0, tile.y]}
+          rotation={[-Math.PI / 2, 0, 0]}
+          onClick={
+            onCellClick
+              ? (e) => {
+                  e.stopPropagation()
+                  onCellClick(tile.x, tile.y)
+                }
+              : undefined
+          }
+        >
           <planeGeometry args={[1, 1]} />
           <meshStandardMaterial color={tile.color} />
         </mesh>
@@ -63,13 +81,30 @@ export function Grid({ level }: { level: t.Level }) {
 }
 
 /** Wall blocks - rendered as unit cubes */
-export function Walls({ level }: { level: t.Level }) {
+export function Walls({
+  level,
+  onCellClick,
+}: {
+  level: t.Level
+  onCellClick?: (x: number, y: number) => void
+}) {
   const walls = React.useMemo(() => play.getWallPositions(level), [level])
 
   return (
     <group>
       {walls.map(([x, y], i) => (
-        <mesh key={i} position={[x, 0.5, y]}>
+        <mesh
+          key={i}
+          position={[x, 0.5, y]}
+          onClick={
+            onCellClick
+              ? (e) => {
+                  e.stopPropagation()
+                  onCellClick(x, y)
+                }
+              : undefined
+          }
+        >
           <boxGeometry args={[1, 1, 1]} />
           <meshStandardMaterial color={COLORS.wall} />
         </mesh>
@@ -79,7 +114,13 @@ export function Walls({ level }: { level: t.Level }) {
 }
 
 /** Keys, doors, goals, lava - rendered as distinctive shapes on top of floor */
-export function Items({ level }: { level: t.Level }) {
+export function Items({
+  level,
+  onCellClick,
+}: {
+  level: t.Level
+  onCellClick?: (x: number, y: number) => void
+}) {
   const items = React.useMemo(() => {
     const result: { x: number; y: number; type: t.CellType }[] = []
     for (let y = 0; y < level.height; y++) {
@@ -98,6 +139,14 @@ export function Items({ level }: { level: t.Level }) {
     return result
   }, [level])
 
+  const clickHandler = (x: number, y: number) =>
+    onCellClick
+      ? (e: { stopPropagation: () => void }) => {
+          e.stopPropagation()
+          onCellClick(x, y)
+        }
+      : undefined
+
   return (
     <group>
       {items.map((item, i) => {
@@ -105,7 +154,7 @@ export function Items({ level }: { level: t.Level }) {
           case t.CellType.Door:
             // Door: tall thin box
             return (
-              <mesh key={i} position={[item.x, 0.4, item.y]}>
+              <mesh key={i} position={[item.x, 0.4, item.y]} onClick={clickHandler(item.x, item.y)}>
                 <boxGeometry args={[0.9, 0.8, 0.9]} />
                 <meshStandardMaterial color={COLORS.door} />
               </mesh>
@@ -113,7 +162,11 @@ export function Items({ level }: { level: t.Level }) {
           case t.CellType.Key:
             // Key: small floating octahedron
             return (
-              <mesh key={i} position={[item.x, 0.35, item.y]}>
+              <mesh
+                key={i}
+                position={[item.x, 0.35, item.y]}
+                onClick={clickHandler(item.x, item.y)}
+              >
                 <octahedronGeometry args={[0.2]} />
                 <meshStandardMaterial
                   color={COLORS.key}
@@ -125,7 +178,11 @@ export function Items({ level }: { level: t.Level }) {
           case t.CellType.Goal:
             // Goal: glowing cylinder
             return (
-              <mesh key={i} position={[item.x, 0.15, item.y]}>
+              <mesh
+                key={i}
+                position={[item.x, 0.15, item.y]}
+                onClick={clickHandler(item.x, item.y)}
+              >
                 <cylinderGeometry args={[0.3, 0.3, 0.3, 8]} />
                 <meshStandardMaterial
                   color={COLORS.goal}
@@ -137,7 +194,12 @@ export function Items({ level }: { level: t.Level }) {
           case t.CellType.Lava:
             // Lava: flat glowing plane (already colored by Grid, add emissive overlay)
             return (
-              <mesh key={i} position={[item.x, 0.01, item.y]} rotation={[-Math.PI / 2, 0, 0]}>
+              <mesh
+                key={i}
+                position={[item.x, 0.01, item.y]}
+                rotation={[-Math.PI / 2, 0, 0]}
+                onClick={clickHandler(item.x, item.y)}
+              >
                 <planeGeometry args={[0.95, 0.95]} />
                 <meshStandardMaterial
                   color={COLORS.lava}

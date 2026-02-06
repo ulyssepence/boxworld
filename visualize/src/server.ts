@@ -27,7 +27,7 @@ app.get('/api/levels', immutableCache, (_req, res) => {
   res.json({ levels: database.getLevels(LEVELS_DIR) })
 })
 
-app.get('/api/levels/:levelId', immutableCache, (req, res) => {
+app.get('/api/levels/:levelId', (req, res) => {
   const result = database.getLevelWithEpisodes(req.params.levelId, LEVELS_DIR)
   if (!result) {
     res.status(404).json({ error: 'Level not found' })
@@ -35,6 +35,18 @@ app.get('/api/levels/:levelId', immutableCache, (req, res) => {
   }
   res.json(result)
 })
+
+// Serve ONNX checkpoint files
+app.use(
+  '/checkpoints',
+  express.static(path.join(DATA_DIR, 'checkpoints'), {
+    setHeaders: (res, filePath) => {
+      if (filePath.endsWith('.onnx')) {
+        res.set('Content-Type', 'application/octet-stream')
+      }
+    },
+  }),
+)
 
 // Static files
 app.use('/static', express.static(path.resolve(import.meta.dirname, '../static')))

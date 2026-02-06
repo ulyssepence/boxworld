@@ -4,14 +4,16 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "build": "esbuild src/client.tsx --bundle --minify --outfile=static/client.js",
+    "build": "cp node_modules/onnxruntime-web/dist/ort.min.js static/ && cp node_modules/onnxruntime-web/dist/*.wasm static/ && cp node_modules/onnxruntime-web/dist/*.mjs static/ && esbuild src/client.tsx --bundle --minify --outfile=static/client.js",
     "dev": "bun run src/server.ts",
     "watch": "nodemon --watch src --ext '*' --exec 'npm run build && npm run dev'",
     "format": "prettier --write 'src/**/*.{ts,tsx}'",
-    "generate-models": "node scripts/generate-models.js"
+    "generate-models": "node scripts/generate-models.js",
+    "test:e2e": "npx playwright test"
   },
   "dependencies": {
     "howler": "^2.2.4",
+    "onnxruntime-web": "^1.24.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "three": "^0.182.0"
@@ -19,6 +21,7 @@
   "devDependencies": {
     "@gltf-transform/core": "^4.3.0",
     "@gltf-transform/extensions": "^4.3.0",
+    "@playwright/test": "^1.58.1",
     "@react-three/drei": "^10.7.7",
     "@react-three/fiber": "^9.5.0",
     "@types/express": "^5.0.6",
