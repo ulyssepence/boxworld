@@ -1,0 +1,30 @@
+{
+  "name": "tic-tac-toe",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "esbuild src/client.tsx --bundle --minify --outfile=static/client.js",
+    "dev": "bun run src/server.ts",
+    "watch": "nodemon --watch src --ext '*' --exec 'npm run build && npm run dev'"
+  },
+  "dependencies": {
+    "howler": "^2.2.4",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "three": "^0.182.0"
+  },
+  "devDependencies": {
+    "@types/howler": "^2.2.12",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
+    "@types/express": "^5.0.6",
+    "@types/node": "^24.10.10",
+    "@types/react": "^19.2.10",
+    "@types/react-dom": "^19.2.3",
+    "esbuild": "^0.27.2",
+    "express": "^5.2.1",
+    "nodemon": "^3.1.11",
+    "typescript": "~5.9.3"
+  }
+}
