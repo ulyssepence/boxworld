@@ -4,6 +4,50 @@ A breakdown of the Boxworld RL Visualization Spec into discrete tasks, each comp
 
 ---
 
+## Implementation Progress
+
+| Task | Status | Commit | Notes |
+|------|--------|--------|-------|
+| 1. Scaffolding | **DONE** | `8180d42` | Pre-commit hook needed path fix (git returns repo-relative paths, hook cd's into subdirs) |
+| 2. Types + Game Logic | **DONE** | `6d86c30` | 369 lines added; esbuild bundles play.ts in 4ms |
+| 3. 3D Models | **DONE** | `9f20a32` | @gltf-transform/core v4 API changed: `setIndex` -> `setIndices`, `createPrimitive()` is on doc not mesh |
+| 4. Python Gymnasium Env | **DONE** | `a35db87` | 36 pytest tests pass; added `[tool.pytest.ini_options] pythonpath = ["."]` to pyproject.toml |
+| 5. Express API + SQLite | **DONE** | `0006d51` | **Switched from better-sqlite3 to bun:sqlite** -- better-sqlite3 not supported in Bun runtime |
+| 6. R3F Scene + App UI | **DONE** | `4b7e65f` | 760 lines; uses inline Three.js primitives (not GLB models); dark theme sidebar |
+| 7. DQN Training | **DONE** | `a6bd061` | 5 tests pass (29s); SB3 DQN with CheckpointCallback |
+| 8. Episode Recording | **DONE** | | Recorder class with greedy policy playback; 8 pytest tests; state_json matches TS GameState exactly |
+| 9. ONNX Export | **DONE** | | Exporter class with torch.onnx.export; verify_export confirms ONNX↔PyTorch match within 1e-5; 5 tests |
+| 10. ONNX Runtime Web | **DONE** | | ml.ts with Agent class; ort loaded via script tag (avoids esbuild WASM issues); stateToTensor matches Python _get_obs() |
+| 11. Seed Data Pipeline | **DONE** | | 4 new levels (simple_corridor, dead_end, key_puzzle, lava_maze); `all` subcommand runs train→export→record; e2e smoke test passed |
+| 12. Level Editor | **DONE** | | Edit mode toggle, cell click cycling (Floor→Wall→Goal→Floor), Reset button restores originalLevel |
+| 13. Playwright Testing | **DONE** | | 11 tests (9 smoke + 2 visual); Chromium only; baseline screenshots; webServer auto-start in config |
+
+### Key Discoveries & Deviations
+
+1. **bun:sqlite instead of better-sqlite3 (Task 5):** The `better-sqlite3` npm package uses native bindings that are not supported in Bun. Switched `db.ts` to use `import { Database } from 'bun:sqlite'` which has a nearly identical API. The `better-sqlite3` and `@types/better-sqlite3` packages were removed from package.json. Future tasks referencing better-sqlite3 should use bun:sqlite instead.
+
+2. **Pre-commit hook path handling (Task 1):** `git diff --cached --name-only` returns repo-relative paths (e.g. `visualize/src/foo.ts`). The hook `cd`s into subdirectories, so paths need `sed` stripping (e.g. `sed 's|^visualize/||'`). Initial version failed on first commit attempt.
+
+3. **@gltf-transform/core v4 breaking changes (Task 3):** The agent's initial script used `doc.createPrimitive().setAttribute().setIndex()` chain which doesn't work in v4. Fixed to: `doc.createPrimitive()` returns a standalone Primitive, methods are `setAttribute()`, `setIndices()` (not `setIndex`), and the primitive is added to a mesh via `mesh.addPrimitive(prim)`.
+
+4. **Task 6 uses inline primitives, not GLB models:** The R3F scene renders walls as `<boxGeometry>`, floor as `<planeGeometry>`, etc. with colored `<meshStandardMaterial>`. The GLB files from Task 3 are not loaded yet. This is fine -- GLB loading can be added when hand-made Blender models replace the placeholders.
+
+5. **Test counts exceeded spec:** Task 4 spec listed 14 tests; implementation has 36 (added edge cases, direction tests, observation content tests, info dict tests). Task 7 has all 5 specified tests.
+
+6. **Observation encoding alignment:** Both Python (`environment.py`) and TypeScript (`play.ts`) use `grid[y][x]` row-major order. Observation is `[flattened_grid..., agent_x, agent_y, has_key]`. This must remain aligned for ONNX inference (Task 10).
+
+7. **onnxruntime-web loaded via script tag (Task 10):** esbuild cannot bundle onnxruntime-web's WASM files. Solution: `ort.min.js` + `.wasm` files are copied to `static/` in the build script, loaded via `<script>` in index.html, and accessed as `globalThis.ort` in `ml.ts`. This avoids all bundling issues.
+
+8. **onnxscript dependency (Task 9):** `torch>=2.10.0` requires `onnxscript>=0.6.0` for `torch.onnx.export`. This was auto-added by `uv add` during Task 9.
+
+9. **Task 8 records a final terminal state:** The Recorder appends an extra step after the episode ends with `done=True`, `action=0`, `reward=0.0`, and no Q-values. This gives the frontend a state to display for the terminal position.
+
+10. **Task 11 end-to-end smoke test:** `python main.py all --steps 100 --interval 50` successfully trained, exported 2 ONNX checkpoints, and recorded 50 episodes (2 checkpoints × 5 levels × 5 runs).
+
+11. **Playwright only Chromium (Task 13):** Only Chromium browser installed to save CI time. Config can be extended to Firefox/WebKit later. Visual regression baselines are platform-specific (`-chromium-darwin.png`).
+
+---
+
 ## Task 1: Project Scaffolding, Formatter, and Pre-commit Hook
 
 **Files to create/modify:**
@@ -146,16 +190,17 @@ cd training && uv run pytest tests/test_environment.py -v
 
 ## Task 5: Express API Server with SQLite
 
+> **IMPLEMENTATION NOTE:** Switched from `better-sqlite3` to `bun:sqlite`. The `better-sqlite3` package uses native C++ bindings that Bun does not support. `bun:sqlite` has an almost identical API (`prepare().all()`, `.exec()`, etc.) and is built into the Bun runtime.
+
 **Files to create/modify:**
 - `visualize/src/server.ts` (rewrite) -- thin entrypoint: instantiate DB, mount routes, listen
-- `visualize/src/db.ts` (new) -- SQLite wrapper library class
-- `visualize/package.json` (modify) -- add `better-sqlite3` and `@types/better-sqlite3`
+- `visualize/src/db.ts` (new) -- SQLite wrapper using `bun:sqlite`
 - `visualize/src/types.ts` (modify if needed) -- API response types
 
 **What it accomplishes:**
 
-`db.ts` exports a `Database` class:
-- `constructor(dbPath)` -- opens SQLite connection
+`db.ts` exports a `DB` class:
+- `constructor(dbPath)` -- opens SQLite connection with `{ create: true }`
 - `initialize()` -- creates the 4 tables (agents, episodes, steps, checkpoints) if not present
 - `getCheckpoints()` -- returns list of checkpoints
 - `getLevels()` -- returns level metadata (reads JSON files from data/levels/)
@@ -539,3 +584,28 @@ Task 1: Scaffolding, Formatter, Pre-commit
 | 7. Cross-browser testing (Playwright + LLM option) | Task 13 -- Playwright across 3 browsers, LLM review as optional step |
 | 8. Qualified imports (`import * as`) | All TypeScript tasks -- `import * as t`, `import * as play`, etc. |
 | 9. Library-like modules (thin entrypoints) | All tasks -- `main.py` is argparse wrapper, `client.tsx` mounts App, `server.ts` wires DB + routes |
+
+---
+
+## Future Work & Open Questions
+
+### Discovered during implementation
+
+1. **GLB model loading:** Task 6 renders with inline Three.js primitives (BoxGeometry, PlaneGeometry, etc.) instead of loading the GLB files from Task 3. A future task should either:
+   - Switch render.tsx to use `useGLTF` from Drei to load the .glb models
+   - Or keep inline primitives until hand-made Blender models are ready, then switch directly to those
+
+2. **Python recorder SQLite schema alignment:** The Python `record.py` (Task 8) must create the exact same 4-table schema as the TypeScript `db.ts`. The schema is defined in both places -- consider a shared schema file or at minimum verify column names match exactly. Key concern: the TypeScript side reads `state_json` and `q_values_json` and parses them as `GameState` and `QValues` -- the Python side must serialize these in exactly the matching format.
+
+3. **bun:sqlite in Task 8 recorder:** The Python recorder writes to SQLite using Python's `sqlite3` module. The TypeScript server reads the same database using `bun:sqlite`. These are compatible at the file format level (both use standard SQLite), but WAL mode must be handled carefully -- both sides use WAL which is fine for concurrent reads.
+
+4. **Observation encoding contract:** The critical alignment between `environment.py`'s `_get_obs()` and `ml.ts`'s `stateToTensor()` (Task 10) must be tested explicitly. Both must produce: `[grid[0][0], grid[0][1], ..., grid[h-1][w-1], agent_x, agent_y, has_key]` as Float32. Consider adding a cross-language test that runs the same level through both and compares byte-for-byte.
+
+5. **Bundle size:** The client.js bundle is 1.1MB minified. Adding `onnxruntime-web` (Task 10) will increase this significantly. Consider:
+   - Lazy-loading the ONNX runtime only when "Run Agent" is clicked
+   - Using the WASM backend (smaller than WebGL) if inference speed is acceptable
+   - Code-splitting with esbuild's `splitting` option (requires ESM output)
+
+6. **Shader passthrough integration:** The `GLSLShader` component from `shader.tsx` wraps the 3D scene with `color = scene(uv);`. This is currently a no-op passthrough. The shader infrastructure is ready for custom post-processing effects (e.g., edge detection, color grading, heatmap overlays for Q-values).
+
+7. **Missing `audio.ts` cleanup:** The `audio.ts` file still exists with a Howler.js Player class and empty `Clip` type. It's unused since the client.tsx rewrite. Should be removed or repurposed for UI sounds.

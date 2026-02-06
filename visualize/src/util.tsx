@@ -5,12 +5,14 @@ export interface AppState {
   levels: t.LevelInfo[]
   checkpoints: t.CheckpointInfo[]
   currentLevel: t.Level | null
+  originalLevel: t.Level | null
   episodes: t.Episode[]
   currentEpisodeIndex: number
   currentStep: number
   isPlaying: boolean
   playbackSpeed: number // steps per second
   editMode: boolean
+  inferenceLoading: boolean
 }
 
 export type AppAction =
@@ -26,17 +28,22 @@ export type AppAction =
   | { type: 'SET_SPEED'; speed: number }
   | { type: 'TOGGLE_EDIT_MODE' }
   | { type: 'EDIT_CELL'; x: number; y: number; cellType: t.CellType }
+  | { type: 'RESET_LEVEL' }
+  | { type: 'LOAD_INFERENCE_EPISODE'; episode: t.Episode }
+  | { type: 'SET_INFERENCE_LOADING'; loading: boolean }
 
 const initialState: AppState = {
   levels: [],
   checkpoints: [],
   currentLevel: null,
+  originalLevel: null,
   episodes: [],
   currentEpisodeIndex: 0,
   currentStep: 0,
   isPlaying: false,
   playbackSpeed: 4,
   editMode: false,
+  inferenceLoading: false,
 }
 
 function getMaxStep(state: AppState): number {
@@ -57,10 +64,15 @@ function reducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         currentLevel: action.level,
+        originalLevel: {
+          ...action.level,
+          grid: action.level.grid.map((row) => [...row]),
+        },
         episodes: action.episodes,
         currentEpisodeIndex: 0,
         currentStep: 0,
         isPlaying: false,
+        editMode: false,
       }
 
     case 'SET_EPISODE':
@@ -108,6 +120,33 @@ function reducer(state: AppState, action: AppAction): AppState {
         currentLevel: { ...state.currentLevel, grid },
       }
     }
+
+    case 'RESET_LEVEL': {
+      if (!state.originalLevel) return state
+      return {
+        ...state,
+        currentLevel: {
+          ...state.originalLevel,
+          grid: state.originalLevel.grid.map((row) => [...row]),
+        },
+        episodes: [],
+        currentEpisodeIndex: 0,
+        currentStep: 0,
+        isPlaying: false,
+      }
+    }
+
+    case 'LOAD_INFERENCE_EPISODE':
+      return {
+        ...state,
+        episodes: [action.episode],
+        currentEpisodeIndex: 0,
+        currentStep: 0,
+        isPlaying: false,
+      }
+
+    case 'SET_INFERENCE_LOADING':
+      return { ...state, inferenceLoading: action.loading }
 
     default:
       return state

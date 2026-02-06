@@ -4,9 +4,11 @@ import * as api from './api'
 import * as util from './util'
 import * as render from './render'
 import * as shader from './shader'
+import * as ml from './ml'
+import * as play from './play'
 
 function GameView() {
-  const [state] = util.useApp()
+  const [state, dispatch] = util.useApp()
   util.usePlayback()
 
   const level = state.currentLevel
@@ -28,19 +30,85 @@ function GameView() {
   // Use the step's game state grid if available (doors may have been toggled, keys picked up)
   const displayLevel: t.Level = currentStepData ? currentStepData.state.level : level
 
+  const handleCellClick = state.editMode
+    ? (x: number, y: number) => {
+        const currentCell = displayLevel.grid[y][x]
+        // Cycle: Floor -> Wall -> Goal -> Floor
+        let nextType: t.CellType
+        switch (currentCell) {
+          case t.CellType.Floor:
+            nextType = t.CellType.Wall
+            break
+          case t.CellType.Wall:
+            nextType = t.CellType.Goal
+            break
+          case t.CellType.Goal:
+            nextType = t.CellType.Floor
+            break
+          default:
+            nextType = t.CellType.Floor
+            break
+        }
+        dispatch({ type: 'EDIT_CELL', x, y, cellType: nextType })
+      }
+    : undefined
+
   return (
     <shader.GLSLShader code="color = scene(uv);">
-      <render.Grid level={displayLevel} />
-      <render.Walls level={displayLevel} />
-      <render.Items level={displayLevel} />
+      <render.Grid level={displayLevel} onCellClick={handleCellClick} />
+      <render.Walls level={displayLevel} onCellClick={handleCellClick} />
+      <render.Items level={displayLevel} onCellClick={handleCellClick} />
       <render.Agent position={agentPos} prevPosition={prevAgentPos} />
       <render.QValueArrows qValues={currentStepData?.qValues} position={agentPos} />
     </shader.GLSLShader>
   )
 }
 
+async function runAgent(
+  level: t.Level,
+  checkpointUrl: string,
+  dispatch: React.Dispatch<util.AppAction>,
+) {
+  dispatch({ type: 'SET_INFERENCE_LOADING', loading: true })
+
+  try {
+    const agent = new ml.Agent()
+    await agent.load(checkpointUrl)
+
+    let gameState = play.createInitialState(level)
+    const steps: t.Step[] = []
+
+    for (let i = 0; i < 200 && !gameState.done; i++) {
+      const { action, qValues } = await agent.selectAction(gameState)
+      const prevState = gameState
+      gameState = play.step(gameState, action)
+      steps.push({
+        state: prevState,
+        action,
+        reward: gameState.reward - prevState.reward,
+        qValues,
+      })
+    }
+
+    const episode: t.Episode = {
+      id: 'live-inference',
+      agentId: 'onnx',
+      levelId: level.id,
+      steps,
+      totalReward: gameState.reward,
+    }
+
+    dispatch({ type: 'LOAD_INFERENCE_EPISODE', episode })
+  } catch (err) {
+    console.error('Inference failed:', err)
+  } finally {
+    dispatch({ type: 'SET_INFERENCE_LOADING', loading: false })
+  }
+}
+
 function Sidebar() {
   const [state, dispatch] = util.useApp()
+  const [selectedCheckpointId, setSelectedCheckpointId] = React.useState<string>('')
 
   // Fetch levels on mount
   React.useEffect(() => {
@@ -51,6 +119,13 @@ function Sidebar() {
       dispatch({ type: 'LOAD_CHECKPOINTS', checkpoints })
     })
   }, [dispatch])
+
+  // Auto-select the first checkpoint when checkpoints load
+  React.useEffect(() => {
+    if (state.checkpoints.length > 0 && !selectedCheckpointId) {
+      setSelectedCheckpointId(state.checkpoints[0].id)
+    }
+  }, [state.checkpoints, selectedCheckpointId])
 
   const episode = state.episodes[state.currentEpisodeIndex]
   const currentStepData = episode?.steps[state.currentStep]
@@ -101,6 +176,23 @@ function Sidebar() {
         </select>
       </div>
 
+      {state.currentLevel && (
+        <div className="sidebar-section">
+          <label>Edit Mode</label>
+          <div className="controls-row">
+            <button onClick={() => dispatch({ type: 'TOGGLE_EDIT_MODE' })}>
+              {state.editMode ? 'Exit Edit' : 'Edit Level'}
+            </button>
+            {state.editMode && (
+              <button onClick={() => dispatch({ type: 'RESET_LEVEL' })}>Reset</button>
+            )}
+          </div>
+          {state.editMode && (
+            <div className="step-info">Click tiles: Floor &rarr; Wall &rarr; Goal &rarr; Floor</div>
+          )}
+        </div>
+      )}
+
       {state.currentLevel && state.episodes.length > 0 && (
         <div className="sidebar-section">
           <label>Episode</label>
@@ -114,6 +206,33 @@ function Sidebar() {
               </option>
             ))}
           </select>
+        </div>
+      )}
+
+      {state.currentLevel && state.checkpoints.length > 0 && (
+        <div className="sidebar-section">
+          <label>Agent Inference</label>
+          <select
+            value={selectedCheckpointId}
+            onChange={(e) => setSelectedCheckpointId(e.target.value)}
+          >
+            {state.checkpoints.map((cp) => (
+              <option key={cp.id} value={cp.id}>
+                {cp.trainingSteps.toLocaleString()} steps
+              </option>
+            ))}
+          </select>
+          <button
+            disabled={state.inferenceLoading || !selectedCheckpointId}
+            onClick={() => {
+              const cp = state.checkpoints.find((c) => c.id === selectedCheckpointId)
+              if (!cp || !state.currentLevel) return
+              const url = `/checkpoints/boxworld_${cp.trainingSteps}_steps.onnx`
+              runAgent(state.currentLevel, url, dispatch)
+            }}
+          >
+            {state.inferenceLoading ? 'Running...' : 'Run Agent'}
+          </button>
         </div>
       )}
 
