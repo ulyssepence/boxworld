@@ -1,1 +1,21 @@
 conversations/
+
+# Data
+data/db.sqlite
+data/checkpoints/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+visualize/static/client.js
+
+# OS
+.DS_Store

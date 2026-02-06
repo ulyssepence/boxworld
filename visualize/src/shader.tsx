@@ -329,7 +329,7 @@ void main() {
 
 function PostProcessQuad({ code, sceneTexture }: { code: string; sceneTexture: THREE.Texture }) {
   const materialRef = React.useRef<THREE.ShaderMaterial>(null!)
-  const size = Fiber.useThree(state => state.size)
+  const size = Fiber.useThree((state) => state.size)
 
   // Create material once, update shader when code changes
   React.useEffect(() => {
