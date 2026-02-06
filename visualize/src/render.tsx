@@ -303,7 +303,7 @@ export function QValueArrows({
 /** Main scene wrapper with Canvas, lights, and controls */
 export function Scene({ children }: { children: React.ReactNode }) {
   return (
-    <Fiber.Canvas camera={{ position: [5, 10, 10], fov: 50 }}>
+    <Fiber.Canvas camera={{ position: [5, 10, 10], fov: 50 }} gl={{ preserveDrawingBuffer: true }}>
       <ambientLight intensity={0.6} />
       <directionalLight position={[10, 10, 5]} intensity={0.8} />
       <Drei.OrbitControls />

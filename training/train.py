@@ -13,12 +13,12 @@ from environment import BoxworldEnv
 class TrainerConfig:
     learning_rate: float = 1e-4
     buffer_size: int = 100_000
-    learning_starts: int = 1000
-    batch_size: int = 32
+    learning_starts: int = 10_000
+    batch_size: int = 64
     gamma: float = 0.99
     target_update_interval: int = 1000
-    exploration_fraction: float = 0.1
-    exploration_final_eps: float = 0.05
+    exploration_fraction: float = 0.3
+    exploration_final_eps: float = 0.02
 
 
 class Trainer:
@@ -38,6 +38,7 @@ class Trainer:
             target_update_interval=self.config.target_update_interval,
             exploration_fraction=self.config.exploration_fraction,
             exploration_final_eps=self.config.exploration_final_eps,
+            policy_kwargs={"net_arch": [128, 128]},
             verbose=1,
         )
 

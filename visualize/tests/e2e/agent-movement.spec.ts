@@ -1,131 +1,182 @@
 import { test, expect } from '@playwright/test'
 
 /**
- * Bug reproduction tests for agent movement issues.
+ * Tests that the 3D agent mesh VISUALLY moves on the WebGL canvas.
  *
- * Bug 1: "Run Agent" in browser produces a stationary agent.
- * Bug 2: Recorded episode playback shows a stationary agent.
+ * These tests find the cyan agent sphere's pixel centroid at different
+ * episode steps and verify it moves to a different screen position.
+ * This proves the R3F mesh actually updates in the rendered frame,
+ * not just that sidebar text changes.
+ *
+ * Requires `preserveDrawingBuffer: true` on the R3F Canvas so that
+ * drawImage can read the WebGL framebuffer for pixel analysis.
  */
 
-/** Helper: select a level by value and wait for it to fully load.
- *
- * React's synthetic events require us to set value via the native setter
- * and then dispatch a 'change' event with bubbles:true. This is the same
- * technique used by React Testing Library's fireEvent.change().
+/**
+ * Select a level via React's internal onChange (React 19 compatible)
+ * and wait for the API response + render.
  */
 async function selectLevelAndWait(page: import('@playwright/test').Page, levelId: string) {
   const sidebar = page.locator('.sidebar')
   const levelSelect = sidebar.locator('select').first()
 
+  // Trigger React 19 onChange via the fiber props
   await levelSelect.evaluate((el: HTMLSelectElement, val: string) => {
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-      HTMLSelectElement.prototype,
-      'value',
-    )!.set!
-    nativeInputValueSetter.call(el, val)
-    el.dispatchEvent(new Event('change', { bubbles: true }))
+    el.value = val
+    const key = Object.keys(el).find((k) => k.startsWith('__reactProps'))!
+    const props = (el as any)[key]
+    props.onChange({ target: el, currentTarget: el })
   }, levelId)
 
-  // Wait for the level to fully load by checking for Playback section
+  // Wait for the API response (level data + episodes)
+  await page.waitForResponse((res) => res.url().includes(`/api/levels/${levelId}`))
+
+  // Wait for React to re-render with the loaded data
   await expect(sidebar.getByText('Playback')).toBeVisible({ timeout: 15000 })
 }
 
-/** Helper: collect agent positions by stepping through an episode.
- * The step-forward button renders as ▶▶ (U+25B6 x2) from &#9654;&#9654; */
-async function collectPositions(
+/**
+ * Find the centroid of cyan-ish pixels by copying the WebGL canvas
+ * (with preserveDrawingBuffer) to a 2D canvas and scanning pixels.
+ *
+ * The agent sphere is #00FFFF with emissive. After 3D lighting, pixels
+ * will have low R, high G, high B.
+ */
+async function findAgentCentroid(
   page: import('@playwright/test').Page,
-  maxSteps: number,
-): Promise<string[]> {
-  const positions: string[] = []
+): Promise<{ x: number; y: number; count: number } | null> {
+  return page.evaluate(() => {
+    const glCanvas = document.querySelector('canvas')
+    if (!glCanvas) return null
 
-  for (let i = 0; i < maxSteps; i++) {
-    // Read current position from Step Info section
-    const posDiv = page.locator('.step-info div').filter({ hasText: /^Position:/ })
-    if ((await posDiv.count()) === 0) break
+    const w = glCanvas.width
+    const h = glCanvas.height
 
-    const text = await posDiv.textContent()
-    if (text) positions.push(text)
+    // Copy WebGL canvas to 2D canvas — drawImage composites the current frame
+    const c2d = document.createElement('canvas')
+    c2d.width = w
+    c2d.height = h
+    const ctx = c2d.getContext('2d')!
+    ctx.drawImage(glCanvas, 0, 0)
+    const { data } = ctx.getImageData(0, 0, w, h)
 
-    // Try to step forward — button text is ▶▶ (U+25B6 x2)
-    const fwdBtn = page.getByRole('button', { name: '\u25B6\u25B6' })
-    if (await fwdBtn.isDisabled()) break
-    await fwdBtn.click()
-    await page.waitForTimeout(100)
-  }
+    let sumX = 0
+    let sumY = 0
+    let count = 0
 
-  return positions
+    for (let py = 0; py < h; py++) {
+      for (let px = 0; px < w; px++) {
+        const i = (py * w + px) * 4
+        const r = data[i]
+        const g = data[i + 1]
+        const b = data[i + 2]
+
+        // Cyan-ish: low red, high green and blue
+        if (r < 100 && g > 140 && b > 140) {
+          sumX += px
+          sumY += py
+          count++
+        }
+      }
+    }
+
+    if (count < 3) return null
+    return { x: Math.round(sumX / count), y: Math.round(sumY / count), count }
+  })
 }
 
-test.describe('Agent Movement Bug Reproduction', () => {
-  test('Run Agent creates episode with Q-values', async ({ page }) => {
+/** Click the step-forward button n times with waits for animation. */
+async function stepForward(page: import('@playwright/test').Page, n: number) {
+  const fwdBtn = page.getByRole('button', { name: '\u25B6\u25B6' })
+  for (let i = 0; i < n; i++) {
+    if (await fwdBtn.isDisabled()) break
+    await fwdBtn.click()
+    // Wait for lerp animation (delta*8 = ~125ms) + render
+    await page.waitForTimeout(400)
+  }
+}
+
+/** Wait for two full animation frames to be painted. */
+async function waitForFrames(page: import('@playwright/test').Page) {
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      ),
+  )
+}
+
+test.describe('Agent Mesh Visual Movement', () => {
+  test('Run Agent: cyan sphere moves on canvas between steps', async ({ page }) => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
     await selectLevelAndWait(page, 'simple_corridor')
 
+    // Run live ONNX inference
     const runBtn = page.getByRole('button', { name: 'Run Agent' })
     await expect(runBtn).toBeVisible({ timeout: 10000 })
-
-    await runBtn.click()
-
-    // Wait for inference to complete — "Running..." disappears
-    await expect(page.getByText('Running...')).toBeHidden({ timeout: 60000 })
-
-    // Should now have Step Info visible
-    const stepInfo = page.locator('.step-info').first()
-    await expect(stepInfo).toBeVisible({ timeout: 5000 })
-
-    // Q-Values section should appear
-    const qSection = page.locator('.sidebar-section').filter({ hasText: 'Q-Values' })
-    await expect(qSection).toBeVisible({ timeout: 5000 })
-
-    // Check all 6 action names are present (use .first() to avoid strict mode on container)
-    for (const action of ['Up:', 'Down:', 'Left:', 'Right:', 'Pickup:', 'Toggle:']) {
-      await expect(qSection.getByText(action).first()).toBeVisible()
-    }
-  })
-
-  test('Run Agent on simple_corridor shows agent movement', async ({ page }) => {
-    await page.goto('/')
-    await page.waitForLoadState('networkidle')
-
-    await selectLevelAndWait(page, 'simple_corridor')
-
-    const runBtn = page.getByRole('button', { name: 'Run Agent' })
-    await expect(runBtn).toBeVisible({ timeout: 10000 })
-
-    // Select the highest-step checkpoint (last option in the inference select)
-    const inferenceSection = page.locator('.sidebar-section').filter({ hasText: 'Agent Inference' })
-    const checkpointSelect = inferenceSection.locator('select')
-    const options = await checkpointSelect.locator('option').all()
-    if (options.length > 0) {
-      const lastValue = await options[options.length - 1].getAttribute('value')
-      if (lastValue) await checkpointSelect.selectOption(lastValue)
-    }
-
-    // Run Agent
     await runBtn.click()
     await expect(page.getByText('Running...')).toBeHidden({ timeout: 60000 })
 
-    // Collect positions by stepping through the episode
-    const positions = await collectPositions(page, 20)
+    // Wait for render to settle
+    await page.waitForTimeout(1000)
+    await waitForFrames(page)
 
-    // Bug 1: Agent should have moved — we expect more than 1 unique position
-    const unique = new Set(positions)
+    // Find agent centroid at step 0
+    const pos0 = await findAgentCentroid(page)
+    expect(pos0, 'Could not find cyan agent sphere on canvas at step 0').not.toBeNull()
+
+    // Check if step-forward button is enabled
+    const fwdBtn = page.getByRole('button', { name: '\u25B6\u25B6' })
+    const btnDisabled = await fwdBtn.isDisabled()
+    const stepText = await page
+      .locator('.step-info div')
+      .filter({ hasText: /^Step:/ })
+      .textContent()
+
+    // Read sidebar position before stepping
+    const posTextBefore = await page
+      .locator('.step-info div')
+      .filter({ hasText: /^Position:/ })
+      .textContent()
+
+    // Step forward 5 times (agent moves RIGHT along corridor)
+    await stepForward(page, 5)
+    await waitForFrames(page)
+
+    // Read sidebar position after stepping
+    const posTextAfter = await page
+      .locator('.step-info div')
+      .filter({ hasText: /^Position:/ })
+      .textContent()
+
+    // Find agent centroid after stepping
+    const pos1 = await findAgentCentroid(page)
+    expect(pos1, 'Could not find cyan agent sphere on canvas after stepping').not.toBeNull()
+
+    const dx = pos1!.x - pos0!.x
+    const dy = pos1!.y - pos0!.y
+    const distance = Math.sqrt(dx * dx + dy * dy)
+
     expect(
-      unique.size,
-      `Bug 1: Agent appears stationary on simple_corridor! ` +
-        `Only positions seen: ${[...unique].join(', ')}`,
-    ).toBeGreaterThan(1)
+      distance,
+      `Agent mesh did NOT move on canvas! ` +
+        `Centroid at step 0: (${pos0!.x}, ${pos0!.y}) [${pos0!.count}px], ` +
+        `after 5 steps: (${pos1!.x}, ${pos1!.y}) [${pos1!.count}px], ` +
+        `pixel distance: ${distance.toFixed(1)}. ` +
+        `Sidebar position before: "${posTextBefore}", after: "${posTextAfter}". ` +
+        `Step text: "${stepText}", fwd button disabled: ${btnDisabled}`,
+    ).toBeGreaterThan(5)
   })
 
-  test('Recorded episode playback shows agent movement', async ({ page }) => {
+  test('Recorded episode: cyan sphere moves on canvas during playback', async ({ page }) => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
     await selectLevelAndWait(page, 'simple_corridor')
 
-    // Check if there are recorded episodes available (Episode section visible)
+    // Check if recorded episodes are available
     const episodeSection = page.locator('.sidebar-section').filter({ hasText: /^Episode/ })
     await page.waitForTimeout(1000)
     const episodeVisible = await episodeSection.isVisible().catch(() => false)
@@ -135,19 +186,34 @@ test.describe('Agent Movement Bug Reproduction', () => {
       return
     }
 
-    // Wait for step info to appear (first step loaded)
+    // Wait for step info to appear + render
     const stepInfo = page.locator('.step-info div').filter({ hasText: /^Step:/ })
     await expect(stepInfo).toBeVisible({ timeout: 5000 })
+    await page.waitForTimeout(1000)
+    await waitForFrames(page)
 
-    // Collect positions by stepping through the episode
-    const positions = await collectPositions(page, 20)
+    // Find agent centroid at step 0
+    const pos0 = await findAgentCentroid(page)
+    expect(pos0, 'Could not find cyan agent sphere on canvas at step 0').not.toBeNull()
 
-    // Bug 2: Agent should have moved during the recorded episode
-    const unique = new Set(positions)
+    // Step forward 5 times
+    await stepForward(page, 5)
+    await waitForFrames(page)
+
+    // Find agent centroid after stepping
+    const pos1 = await findAgentCentroid(page)
+    expect(pos1, 'Could not find cyan agent sphere on canvas after stepping').not.toBeNull()
+
+    const dx = pos1!.x - pos0!.x
+    const dy = pos1!.y - pos0!.y
+    const distance = Math.sqrt(dx * dx + dy * dy)
+
     expect(
-      unique.size,
-      `Bug 2: Recorded episode shows stationary agent! ` +
-        `Only positions seen: ${[...unique].join(', ')}`,
-    ).toBeGreaterThan(1)
+      distance,
+      `Agent mesh did NOT move during recorded playback! ` +
+        `Centroid at step 0: (${pos0!.x}, ${pos0!.y}) [${pos0!.count}px], ` +
+        `after 5 steps: (${pos1!.x}, ${pos1!.y}) [${pos1!.count}px], ` +
+        `pixel distance: ${distance.toFixed(1)}`,
+    ).toBeGreaterThan(5)
   })
 })

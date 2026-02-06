@@ -441,3 +441,291 @@ def test_custom_dimensions():
     assert env._height == 8
     assert obs.shape == (15 * 8 + 3,)
     assert env.observation_space.shape == (15 * 8 + 3,)
+
+
+def test_goal_distance_uses_bfs_not_manhattan():
+    """BFS distance should account for walls, not just Manhattan distance."""
+    env = BoxworldEnv(width=5, height=5)
+    env.reset(seed=0)
+    # Layout:
+    #   W W W W W
+    #   W A W G W
+    #   W . . . W
+    #   W W W W W
+    #   W W W W W
+    env._grid = [[BoxworldEnv.WALL] * 5 for _ in range(5)]
+    env._grid[1][1] = BoxworldEnv.FLOOR  # agent
+    env._grid[1][3] = BoxworldEnv.GOAL  # goal
+    env._grid[2][1] = BoxworldEnv.FLOOR
+    env._grid[2][2] = BoxworldEnv.FLOOR
+    env._grid[2][3] = BoxworldEnv.FLOOR
+    env._agent_pos = [1, 1]
+
+    # Manhattan distance would be 2, but wall at (2,1) blocks direct path
+    # BFS path: (1,1) -> (1,2) -> (2,2) -> (3,2) -> (3,1) = 4 steps
+    assert env._goal_distance() == 4.0
+
+
+# ---------------------------------------------------------------------------
+# Door-aware BFS shaping tests (G)
+# ---------------------------------------------------------------------------
+
+
+def _make_door_env():
+    """Create a 5x5 env with agent, door, key, and goal behind the door.
+
+    Layout (grid[y][x]):
+        y=0: W W W W W
+        y=1: W A . K W
+        y=2: W W D W W
+        y=3: W . G . W
+        y=4: W W W W W
+
+    Agent at (1,1), Key at (3,1), Door at (2,2), Goal at (2,3).
+    """
+    env = BoxworldEnv(width=5, height=5)
+    env.reset(seed=0)
+    env._grid = [[BoxworldEnv.WALL] * 5 for _ in range(5)]
+    env._grid[1][1] = BoxworldEnv.FLOOR  # agent
+    env._grid[1][2] = BoxworldEnv.FLOOR
+    env._grid[1][3] = BoxworldEnv.KEY
+    env._grid[2][2] = BoxworldEnv.DOOR
+    env._grid[3][1] = BoxworldEnv.FLOOR
+    env._grid[3][2] = BoxworldEnv.GOAL
+    env._grid[3][3] = BoxworldEnv.FLOOR
+    env._agent_pos = [1, 1]
+    env._has_key = False
+    env._steps = 0
+    env._last_direction = BoxworldEnv.UP
+    return env
+
+
+def test_goal_distance_without_key_blocked_by_door():
+    """Without a key, BFS should not pass through doors."""
+    env = _make_door_env()
+    assert env._has_key is False
+    # Goal at (2,3) is behind door at (2,2) — unreachable without key
+    assert env._goal_distance() is None
+
+
+def test_goal_distance_with_key_passes_through_door():
+    """With a key, BFS should treat doors as passable."""
+    env = _make_door_env()
+    env._has_key = True
+    # Agent at (1,1) -> (2,1) -> through door (2,2) -> goal (2,3) = 3 steps
+    assert env._goal_distance() == 3.0
+
+
+def test_key_distance_finds_nearest_key():
+    """_key_distance should return BFS distance to nearest key."""
+    env = _make_door_env()
+    # Agent at (1,1), key at (3,1), path: (1,1) -> (2,1) -> (3,1) = 2
+    assert env._key_distance() == 2.0
+
+
+def test_key_distance_returns_none_when_no_key():
+    """_key_distance returns None when no key exists."""
+    env = _make_simple_env()
+    assert env._key_distance() is None
+
+
+def test_key_distance_zero_when_standing_on_key():
+    """_key_distance returns 0 when agent is on a key cell."""
+    env = _make_simple_env()
+    env._grid[2][2] = BoxworldEnv.KEY
+    assert env._key_distance() == 0.0
+
+
+def test_shaping_toward_key_when_goal_blocked():
+    """When goal is behind a door, shaping should guide toward the key."""
+    env = _make_door_env()
+    # Agent at (1,1), key at (3,1), goal blocked
+    # Move RIGHT toward key: (1,1) -> (2,1)
+    _, reward, _, _, _ = env.step(BoxworldEnv.RIGHT)
+    # Step penalty -0.01 + shaping toward key: 0.1 * (2 - 1) = +0.1
+    assert reward == pytest.approx(-0.01 + 0.1)
+
+
+def test_shaping_toward_goal_when_has_key():
+    """When agent has a key and goal is reachable through door, shape toward goal."""
+    env = _make_door_env()
+    env._has_key = True
+    env._agent_pos = [2, 1]  # one step from door, 2 from goal
+    # Move DOWN toward door/goal: (2,1) -> blocked by door
+    # Actually the door blocks movement, so agent stays at (2,1)
+    # Let's instead test from (1,1) moving right toward (2,1) which is closer to goal
+    env._agent_pos = [1, 1]
+    # Goal distance with key: (1,1)->(2,1)->(2,2 door)->(2,3 goal) = 3
+    assert env._goal_distance() == 3.0
+    _, reward, _, _, _ = env.step(BoxworldEnv.RIGHT)
+    # Agent moves to (2,1). New goal dist = 2. Old was 3.
+    # Step penalty -0.01 + shaping: 0.1 * (3 - 2) = +0.1
+    assert reward == pytest.approx(-0.01 + 0.1)
+
+
+def test_pickup_reward_bonus():
+    """Picking up a key gives +0.2 bonus on top of step penalty."""
+    env = _make_simple_env()
+    env._grid[2][2] = BoxworldEnv.KEY
+    _, reward, _, _, _ = env.step(BoxworldEnv.PICKUP)
+    # Step penalty -0.01 + pickup bonus +0.2, no shaping (no goal)
+    assert reward == pytest.approx(-0.01 + 0.2)
+    assert env._has_key is True
+
+
+def test_toggle_reward_bonus():
+    """Opening a door gives +0.2 bonus and consumes the key."""
+    env = _make_simple_env()
+    env._has_key = True
+    env._grid[1][2] = BoxworldEnv.DOOR
+    env._last_direction = BoxworldEnv.UP
+    _, reward, _, _, _ = env.step(BoxworldEnv.TOGGLE)
+    # Step penalty -0.01 + toggle bonus +0.2, no shaping (no goal)
+    assert reward == pytest.approx(-0.01 + 0.2)
+    assert env._grid[1][2] == BoxworldEnv.FLOOR
+    assert env._has_key is False  # key consumed
+
+
+def test_toggle_consumes_key():
+    """Toggle should consume the key after opening a door."""
+    env = _make_simple_env()
+    env._has_key = True
+    env._grid[1][2] = BoxworldEnv.DOOR
+    env._last_direction = BoxworldEnv.UP
+    env.step(BoxworldEnv.TOGGLE)
+    assert env._has_key is False
+
+
+def test_toggle_without_door_no_bonus():
+    """Toggle with key but no adjacent door gives no bonus."""
+    env = _make_simple_env()
+    env._has_key = True
+    env._last_direction = BoxworldEnv.UP
+    # No door above agent — just wall
+    _, reward, _, _, _ = env.step(BoxworldEnv.TOGGLE)
+    assert reward == pytest.approx(-0.01)
+    assert env._has_key is True  # key not consumed
+
+
+# ---------------------------------------------------------------------------
+# Procedural maze generator tests (B)
+# ---------------------------------------------------------------------------
+
+
+def test_generated_maze_is_solvable():
+    """Generated maze should have a reachable goal (possibly via key+door)."""
+    env = BoxworldEnv()
+    for seed in range(20):
+        env.reset(seed=seed)
+        goal = _find_cell(env, BoxworldEnv.GOAL)
+
+        # Check if goal is directly reachable
+        dist = env._bfs_distance(env._agent_pos[0], env._agent_pos[1], goal[0], goal[1])
+        if dist is not None:
+            continue
+
+        # If not, check key+door solvability: key reachable, and goal reachable with key
+        key_dist = env._key_distance()
+        assert key_dist is not None, f"Seed {seed}: goal blocked by door but no reachable key"
+        env._has_key = True
+        goal_dist = env._goal_distance()
+        env._has_key = False
+        assert goal_dist is not None, f"Seed {seed}: goal unreachable even with key"
+
+
+def test_generated_maze_has_corridors():
+    """Generated maze should have wall cells in the interior (not just border)."""
+    env = BoxworldEnv()
+    env.reset(seed=42)
+    interior_walls = 0
+    for y in range(1, env._height - 1):
+        for x in range(1, env._width - 1):
+            if env._grid[y][x] == BoxworldEnv.WALL:
+                interior_walls += 1
+    # A maze should have many interior walls (open room had ~10%)
+    # Recursive backtracker on 10x10 produces ~30-40 interior walls
+    assert interior_walls > 10, f"Only {interior_walls} interior walls — not maze-like"
+
+
+def test_generated_maze_minimum_distance():
+    """Most generated mazes should have agent-to-goal BFS distance >= 5."""
+    env = BoxworldEnv()
+    short_count = 0
+    for seed in range(50):
+        env.reset(seed=seed)
+        goal = _find_cell(env, BoxworldEnv.GOAL)
+        dist = env._bfs_distance(env._agent_pos[0], env._agent_pos[1], goal[0], goal[1])
+        if dist is not None and dist < 5:
+            short_count += 1
+    # Allow some fallback cases but most should meet the threshold
+    assert short_count < 10, f"{short_count}/50 mazes had distance < 5"
+
+
+def test_generated_maze_sometimes_has_doors():
+    """Some generated mazes should include doors and keys (~30% chance)."""
+    env = BoxworldEnv()
+    door_count = 0
+    for seed in range(100):
+        env.reset(seed=seed)
+        has_door = any(
+            env._grid[y][x] == BoxworldEnv.DOOR
+            for y in range(env._height)
+            for x in range(env._width)
+        )
+        if has_door:
+            door_count += 1
+    # With 30% chance, expect ~30 but allow variance
+    assert door_count >= 5, f"Only {door_count}/100 mazes had doors"
+
+
+def test_generated_maze_sometimes_has_lava():
+    """Some generated mazes should include lava (~20% chance)."""
+    env = BoxworldEnv()
+    lava_count = 0
+    for seed in range(100):
+        env.reset(seed=seed)
+        has_lava = any(
+            env._grid[y][x] == BoxworldEnv.LAVA
+            for y in range(env._height)
+            for x in range(env._width)
+        )
+        if has_lava:
+            lava_count += 1
+    assert lava_count >= 3, f"Only {lava_count}/100 mazes had lava"
+
+
+def test_generated_maze_deterministic():
+    """Same seed should produce the same maze."""
+    env1 = BoxworldEnv()
+    obs1, _ = env1.reset(seed=42)
+    env2 = BoxworldEnv()
+    obs2, _ = env2.reset(seed=42)
+    np.testing.assert_array_equal(obs1, obs2)
+
+
+def test_generated_maze_door_has_key():
+    """When a maze has a door, it should also have a key on the agent's side."""
+    env = BoxworldEnv()
+    for seed in range(100):
+        env.reset(seed=seed)
+        has_door = any(
+            env._grid[y][x] == BoxworldEnv.DOOR
+            for y in range(env._height)
+            for x in range(env._width)
+        )
+        has_key = any(
+            env._grid[y][x] == BoxworldEnv.KEY
+            for y in range(env._height)
+            for x in range(env._width)
+        )
+        if has_door:
+            assert has_key, f"Seed {seed}: has door but no key"
+
+
+def _find_cell(env: BoxworldEnv, cell_type: int) -> tuple[int, int]:
+    """Find the first cell of the given type."""
+    for y in range(env._height):
+        for x in range(env._width):
+            if env._grid[y][x] == cell_type:
+                return (x, y)
+    raise ValueError(f"Cell type {cell_type} not found")
