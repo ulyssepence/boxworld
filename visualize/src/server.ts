@@ -1,12 +1,11 @@
 import express from 'express'
 import http from 'http'
-import path  from 'path'
+import path from 'path'
 import * as ws from 'ws'
 import * as play from './play'
 import * as t from './types'
 
-const state = {
-}
+const state = {}
 
 const app = express()
 app.use(express.json())

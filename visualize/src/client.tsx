@@ -1,19 +1,17 @@
 import * as React from 'react'
-import * as ReactDOM from "react-dom/client"
-import * as audio from "./audio"
-import * as play from "./play"
-import * as t from "./types"
+import * as ReactDOM from 'react-dom/client'
+import * as audio from './audio'
+import * as play from './play'
+import * as t from './types'
 
-export type State = {
-}
+export type State = {}
 
 const audioPlayer = new audio.Player('/static')
 const websocketProtocol = document.location.protocol == 'http:' ? 'ws' : 'wss'
 const mailbox = new mail.Box(new WebSocket(`${websocketProtocol}://${window.location.host}`))
 
 export function initialState(): State {
-  return {
-  }
+  return {}
 }
 
 function onMessage(state: State, message: t.ToClientMessage): State {
@@ -24,13 +22,11 @@ function onMessage(state: State, message: t.ToClientMessage): State {
 }
 
 function View() {
-  return (
-    <></>
-  )
+  return <></>
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
+ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <View />
-  </React.StrictMode>
+  </React.StrictMode>,
 )

@@ -1,7 +1,7 @@
 [project]
 name = "boxworld"
 version = "0.1.0"
-description = "Add your description here"
+description = "Boxworld RL training environment"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -11,3 +11,16 @@ dependencies = [
     "stable-baselines3>=2.7.1",
     "torch>=2.10.0",
 ]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.11.13",
+    "pytest>=8.0.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.format]
+quote-style = "double"

@@ -1,7 +1,6 @@
 import * as howler from 'howler'
 
-export type Clip =
-  | ''
+export type Clip = ''
 
 export interface PlayOptions {
   volume?: number
@@ -13,18 +12,17 @@ export interface PlayOptions {
 }
 
 export class Player {
-  constructor(private urlBase: string) {
-  }
+  constructor(private urlBase: string) {}
 
   playSound(clip: Clip, options: PlayOptions = { autoplay: true, preload: true }): howler.Howl {
-      return new howler.Howl({
-          src: [this._clipPath(clip)],
-          ...options,
-      });
+    return new howler.Howl({
+      src: [this._clipPath(clip)],
+      ...options,
+    })
   }
 
   _clipPath(clip: Clip): string {
-      const dashName = clip.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()
-      return `${this.urlBase}/${dashName}.mp3`
+    const dashName = clip.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase()
+    return `${this.urlBase}/${dashName}.mp3`
   }
 }

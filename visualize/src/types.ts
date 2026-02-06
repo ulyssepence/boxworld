@@ -1,5 +1,3 @@
-import * as audio from "./audio"
+import * as audio from './audio'
 
-export type Response =
-  | { type: 'SUCCESS', result: any }
-  | { type: 'ERROR', error: string }
+export type Response = { type: 'SUCCESS'; result: any } | { type: 'ERROR'; error: string }
