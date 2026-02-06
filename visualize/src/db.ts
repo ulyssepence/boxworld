@@ -82,7 +82,11 @@ export class DB {
 
     const episodeRows = this.db
       .prepare(
-        'SELECT id, agent_id, level_id, total_reward FROM episodes WHERE level_id = ? ORDER BY run_number',
+        `SELECT e.id, e.agent_id, e.level_id, e.total_reward
+         FROM episodes e
+         JOIN agents a ON e.agent_id = a.id
+         WHERE e.level_id = ?
+         ORDER BY e.total_reward DESC, a.training_steps DESC, e.run_number`,
       )
       .all(levelId) as {
       id: string

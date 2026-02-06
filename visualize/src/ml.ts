@@ -70,7 +70,9 @@ export class Agent {
    */
   async load(modelUrl: string): Promise<void> {
     const ort = getOrt()
-    this.session = await ort.InferenceSession.create(modelUrl)
+    this.session = await ort.InferenceSession.create(modelUrl, {
+      executionProviders: ['wasm'],
+    })
   }
 
   /**

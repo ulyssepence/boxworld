@@ -120,10 +120,10 @@ function Sidebar() {
     })
   }, [dispatch])
 
-  // Auto-select the first checkpoint when checkpoints load
+  // Auto-select the best (highest training steps) checkpoint when checkpoints load
   React.useEffect(() => {
     if (state.checkpoints.length > 0 && !selectedCheckpointId) {
-      setSelectedCheckpointId(state.checkpoints[0].id)
+      setSelectedCheckpointId(state.checkpoints[state.checkpoints.length - 1].id)
     }
   }, [state.checkpoints, selectedCheckpointId])
 

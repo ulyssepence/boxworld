@@ -188,16 +188,32 @@ class Recorder:
 
         return episode_id
 
+    def clear_db(self) -> None:
+        """Delete all data from every table so we start fresh."""
+        self.conn.executescript(
+            """
+            DELETE FROM steps;
+            DELETE FROM episodes;
+            DELETE FROM checkpoints;
+            DELETE FROM agents;
+            """
+        )
+
     def record_all(
         self,
         checkpoint_dir: str,
         levels_dir: str,
         runs_per_level: int,
+        min_steps: int | None = None,
     ) -> None:
-        """Iterate over all checkpoints x levels x runs and record episodes."""
+        """Iterate over all checkpoints x levels x runs and record episodes.
+
+        If min_steps is None, only the highest-step checkpoint is used.
+        """
         from stable_baselines3 import DQN
 
         self.initialize_db()
+        self.clear_db()
 
         # Discover checkpoint files
         checkpoint_pattern = os.path.join(checkpoint_dir, "boxworld_*_steps.zip")
@@ -206,6 +222,16 @@ class Recorder:
         if not checkpoint_files:
             print(f"No checkpoints found in {checkpoint_dir}")
             return
+
+        # If min_steps not specified, find the highest checkpoint and only use that
+        if min_steps is None:
+            max_steps = 0
+            for f in checkpoint_files:
+                match = re.search(r"boxworld_(\d+)_steps\.zip", os.path.basename(f))
+                if match:
+                    max_steps = max(max_steps, int(match.group(1)))
+            min_steps = max_steps
+            print(f"Using only highest checkpoint: {min_steps} steps")
 
         # Discover level files
         level_pattern = os.path.join(levels_dir, "*.json")
@@ -228,6 +254,9 @@ class Recorder:
             if not match:
                 continue
             training_steps = int(match.group(1))
+
+            if training_steps < min_steps:
+                continue
 
             # Create env and load model
             env = BoxworldEnv()

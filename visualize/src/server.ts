@@ -12,18 +12,12 @@ database.initialize()
 const app = express()
 app.use(express.json())
 
-// Cache headers for level data (immutable once created)
-function immutableCache(_req: express.Request, res: express.Response, next: express.NextFunction) {
-  res.set('Cache-Control', 'public, max-age=31536000, immutable')
-  next()
-}
-
 // API endpoints
 app.get('/api/checkpoints', (_req, res) => {
   res.json({ checkpoints: database.getCheckpoints() })
 })
 
-app.get('/api/levels', immutableCache, (_req, res) => {
+app.get('/api/levels', (_req, res) => {
   res.json({ levels: database.getLevels(LEVELS_DIR) })
 })
 
