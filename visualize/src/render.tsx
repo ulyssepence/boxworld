@@ -4,6 +4,7 @@ import * as Drei from '@react-three/drei'
 import * as THREE from 'three'
 import * as t from './types'
 import * as play from './play'
+import GLSLShader from './shader'
 
 // Colors
 const COLORS = {
@@ -300,14 +301,39 @@ export function QValueArrows({
   )
 }
 
-/** Main scene wrapper with Canvas, lights, and controls */
+const postProcessor = `
+  float period_secs = 45.0;
+  float band_size = 0.003;
+  float band = mod(uv.y, band_size);
+  float direction = band < (band_size / 2.0) ? 1.0 : -1.2;
+
+  vec3 original = scene(uv);
+  if (original.x == 0.0 && original.y == 0.0 && original.z == 0.0) {
+    // uv = (uv + triangle(floor_to_nearest(uv.y, band_size / 4.0)) * 6.28) * 3.0;
+    uv = uv * 3.0;
+    color = vec3(
+      scene(vec2(direction * t / period_secs, 0.0) + uv + voronoi_noise(t / 4.0 + uv *  10.0) * 0.02).x,
+      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv *  10.0) * 0.01).y,
+      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.01).z
+    ) * 0.05;
+  } else {
+    color = vec3(
+      scene(uv + voronoi_noise(t / 4.0 + uv * 10.0) * 0.02).x,
+      scene(uv - voronoi_noise(t / 4.0 + uv * 10.0) * 0.01).y,
+      scene(uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.01).z
+    );
+  }
+`
+
 export function Scene({ children }: { children: React.ReactNode }) {
   return (
     <Fiber.Canvas camera={{ position: [5, 10, 10], fov: 50 }} gl={{ preserveDrawingBuffer: true }}>
-      <ambientLight intensity={0.6} />
-      <directionalLight position={[10, 10, 5]} intensity={0.8} />
-      <Drei.OrbitControls />
-      {children}
+      <GLSLShader code={postProcessor}>
+        <ambientLight intensity={0.6} />
+        <directionalLight position={[10, 10, 5]} intensity={0.8} />
+        <Drei.OrbitControls />
+        {children}
+      </GLSLShader>
     </Fiber.Canvas>
   )
 }

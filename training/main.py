@@ -1,4 +1,4 @@
-"""Boxworld training CLI entry point."""
+"""Boxworld PPO training CLI entry point."""
 
 import argparse
 
@@ -7,11 +7,19 @@ from train import Trainer, TrainerConfig
 
 
 def cmd_train(args):
-    env = BoxworldEnv(
-        levels_dir=args.levels_dir,
-        designed_level_prob=0.7,
-    )
-    trainer = Trainer(env, TrainerConfig())
+    level_weights = {
+        "open_room": 1.0,
+        "simple_corridor": 1.0,
+        "lava_crossing": 1.0,
+        "door_key": 1.0,
+        "two_rooms": 1.0,
+    }
+    env_kwargs = {
+        "levels_dir": args.levels_dir,
+        "designed_level_prob": 0.9,
+        "level_weights": level_weights,
+    }
+    trainer = Trainer(BoxworldEnv, TrainerConfig(), env_kwargs=env_kwargs)
     trainer.train(
         total_steps=args.steps,
         checkpoint_interval=args.interval,
@@ -86,9 +94,9 @@ def main():
     parser = argparse.ArgumentParser(description="Boxworld training pipeline")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    train_parser = subparsers.add_parser("train", help="Train DQN agent")
-    train_parser.add_argument("--steps", type=int, default=500_000)
-    train_parser.add_argument("--interval", type=int, default=10_000)
+    train_parser = subparsers.add_parser("train", help="Train PPO agent")
+    train_parser.add_argument("--steps", type=int, default=2_000_000)
+    train_parser.add_argument("--interval", type=int, default=25_000)
     train_parser.add_argument("--checkpoint-dir", default="../data/checkpoints")
     train_parser.add_argument("--levels-dir", default="../data/levels")
     train_parser.set_defaults(func=cmd_train)
@@ -113,8 +121,8 @@ def main():
     export_parser.set_defaults(func=cmd_export)
 
     all_parser = subparsers.add_parser("all", help="Run full pipeline: train -> export -> record")
-    all_parser.add_argument("--steps", type=int, default=500_000)
-    all_parser.add_argument("--interval", type=int, default=10_000)
+    all_parser.add_argument("--steps", type=int, default=2_000_000)
+    all_parser.add_argument("--interval", type=int, default=25_000)
     all_parser.add_argument("--checkpoint-dir", default="../data/checkpoints")
     all_parser.add_argument("--output-dir", default=None)
     all_parser.add_argument("--db", default="../data/db.sqlite")

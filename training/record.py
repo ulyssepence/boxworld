@@ -98,15 +98,19 @@ class Recorder:
         step_rows: list[tuple] = []
 
         while not done:
-            # Get Q-values from model
+            # Get action logits from PPO's actor network
             obs_tensor = torch.as_tensor(obs).unsqueeze(0).to(model.device)
             with torch.no_grad():
-                q_values = model.policy.q_net(obs_tensor).cpu().numpy()[0]
+                features = model.policy.extract_features(
+                    obs_tensor, model.policy.pi_features_extractor
+                )
+                latent_pi = model.policy.mlp_extractor.forward_actor(features)
+                action_logits = model.policy.action_net(latent_pi).cpu().numpy()[0]
 
-            q_dict = {str(i): float(q_values[i]) for i in range(6)}
+            q_dict = {str(i): float(action_logits[i]) for i in range(6)}
 
-            # Greedy action
-            action = int(np.argmax(q_values))
+            # Greedy action (argmax of logits works identically to argmax of Q-values)
+            action = int(np.argmax(action_logits))
 
             # Build state_json BEFORE taking the step (current state)
             # Use the env's current grid (which mutates on key pickup / door toggle),
@@ -210,7 +214,7 @@ class Recorder:
 
         If min_steps is None, only the highest-step checkpoint is used.
         """
-        from stable_baselines3 import DQN
+        from stable_baselines3 import PPO
 
         self.initialize_db()
         self.clear_db()
@@ -260,10 +264,10 @@ class Recorder:
 
             # Create env and load model
             env = BoxworldEnv()
-            model = DQN.load(checkpoint_file, env=env)
+            model = PPO.load(checkpoint_file, env=env)
 
             # Register agent
-            agent_name = f"dqn_{training_steps}"
+            agent_name = f"ppo_{training_steps}"
             agent_id = self.register_agent(agent_name, training_steps)
 
             # Register checkpoint
