@@ -113,6 +113,7 @@ export function step(state: t.GameState, action: t.Action): t.GameState {
           grid[adjY][adjX] === t.CellType.Door
         ) {
           grid[adjY][adjX] = t.CellType.Floor
+          hasKey = false
           break
         }
       }

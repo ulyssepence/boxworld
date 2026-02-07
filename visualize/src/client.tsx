@@ -3,10 +3,21 @@ import * as ReactDOM from 'react-dom/client'
 import * as api from './api'
 import * as util from './util'
 import * as render from './render'
-import * as shader from './shader'
 import * as ml from './ml'
-import * as play from './play'
 import * as t from './types'
+
+function cycleCellType(currentCell: t.CellType): t.CellType {
+  switch (currentCell) {
+    case t.CellType.Floor:
+      return t.CellType.Wall
+    case t.CellType.Wall:
+      return t.CellType.Goal
+    case t.CellType.Goal:
+      return t.CellType.Floor
+    default:
+      return t.CellType.Floor
+  }
+}
 
 function GameView() {
   const [state, dispatch] = util.useApp()
@@ -15,11 +26,38 @@ function GameView() {
   const level = state.currentLevel
   if (!level) return null
 
+  const li = state.liveInference
+
+  if (li.active) {
+    // Live inference mode: display currentLevel (shared mutable grid), agent from gameState
+    const agentPos: [number, number] = li.gameState ? li.gameState.agentPosition : level.agentStart
+    const prevAgentPos = li.prevAgentPosition ?? undefined
+
+    const handleCellClick = (x: number, y: number) => {
+      const currentCell = level.grid[y][x]
+      dispatch({ type: 'EDIT_CELL', x, y, cellType: cycleCellType(currentCell) })
+    }
+
+    return (
+      <>
+        <render.Grid level={level} onCellClick={handleCellClick} />
+        <render.Walls level={level} onCellClick={handleCellClick} />
+        <render.Items level={level} onCellClick={handleCellClick} />
+        <render.Agent
+          position={agentPos}
+          prevPosition={prevAgentPos}
+          stepsPerSecond={state.playbackSpeed}
+        />
+        <render.QValueArrows qValues={li.lastQValues ?? undefined} position={agentPos} />
+      </>
+    )
+  }
+
+  // Replay mode (unchanged)
   const episode = state.episodes[state.currentEpisodeIndex]
   const currentStepData = episode?.steps[state.currentStep]
   const prevStepData = state.currentStep > 0 ? episode?.steps[state.currentStep - 1] : undefined
 
-  // Determine agent position: from episode step state, or level start
   const agentPos: [number, number] = currentStepData
     ? currentStepData.state.agentPosition
     : level.agentStart
@@ -28,8 +66,6 @@ function GameView() {
     ? prevStepData.state.agentPosition
     : undefined
 
-  // In edit mode, always show the live editable level. Otherwise use the step's
-  // game state grid (doors may have been toggled, keys picked up during replay).
   const displayLevel: t.Level = state.editMode
     ? level
     : currentStepData
@@ -39,23 +75,7 @@ function GameView() {
   const handleCellClick = state.editMode
     ? (x: number, y: number) => {
         const currentCell = displayLevel.grid[y][x]
-        // Cycle: Floor -> Wall -> Goal -> Floor
-        let nextType: t.CellType
-        switch (currentCell) {
-          case t.CellType.Floor:
-            nextType = t.CellType.Wall
-            break
-          case t.CellType.Wall:
-            nextType = t.CellType.Goal
-            break
-          case t.CellType.Goal:
-            nextType = t.CellType.Floor
-            break
-          default:
-            nextType = t.CellType.Floor
-            break
-        }
-        dispatch({ type: 'EDIT_CELL', x, y, cellType: nextType })
+        dispatch({ type: 'EDIT_CELL', x, y, cellType: cycleCellType(currentCell) })
       }
     : undefined
 
@@ -74,63 +94,80 @@ function GameView() {
   )
 }
 
-async function runAgent(
-  level: t.Level,
+async function startLiveAgent(
   checkpointUrl: string,
+  agentRef: React.MutableRefObject<ml.Agent | null>,
   dispatch: React.Dispatch<util.AppAction>,
 ) {
   dispatch({ type: 'SET_INFERENCE_LOADING', loading: true })
-
   try {
     const agent = new ml.Agent()
     await agent.load(checkpointUrl)
-
-    let gameState = play.createInitialState(level)
-    const steps: t.Step[] = []
-
-    for (let i = 0; i < 200 && !gameState.done; i++) {
-      const { action, qValues } = await agent.selectAction(gameState)
-      const prevState = gameState
-      gameState = play.step(gameState, action)
-      steps.push({
-        state: prevState,
-        action,
-        reward: gameState.reward - prevState.reward,
-        qValues,
-      })
-    }
-
-    const episode: t.Episode = {
-      id: 'live-inference',
-      agentId: 'onnx',
-      levelId: level.id,
-      steps,
-      totalReward: gameState.reward,
-    }
-
-    dispatch({ type: 'LOAD_INFERENCE_EPISODE', episode })
+    agentRef.current = agent
+    dispatch({ type: 'START_LIVE_INFERENCE' })
+    dispatch({ type: 'LIVE_PLAY' })
   } catch (err) {
-    console.error('Inference failed:', err)
+    console.error('Failed to load agent:', err)
   } finally {
     dispatch({ type: 'SET_INFERENCE_LOADING', loading: false })
   }
 }
 
+const ACTION_NAMES: Record<t.Action, string> = {
+  [t.Action.Up]: 'Up',
+  [t.Action.Down]: 'Down',
+  [t.Action.Left]: 'Left',
+  [t.Action.Right]: 'Right',
+  [t.Action.Pickup]: 'Pickup',
+  [t.Action.Toggle]: 'Toggle',
+}
+
+function QValuesPanel({ qValues }: { qValues: t.QValues }) {
+  return (
+    <div className="sidebar-section">
+      <label>Q-Values</label>
+      <div className="step-info">
+        {(
+          [
+            [t.Action.Up, 'Up'],
+            [t.Action.Down, 'Down'],
+            [t.Action.Left, 'Left'],
+            [t.Action.Right, 'Right'],
+            [t.Action.Pickup, 'Pickup'],
+            [t.Action.Toggle, 'Toggle'],
+          ] as [t.Action, string][]
+        ).map(([action, name]) => (
+          <div key={action}>
+            {name}: {qValues[action].toFixed(3)}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function Sidebar() {
   const [state, dispatch] = util.useApp()
+  const { agentRef, stepOnce } = util.useLiveInference()
   const [selectedCheckpointId, setSelectedCheckpointId] = React.useState<string>('')
+
+  const li = state.liveInference
 
   // Space key toggles play/pause
   React.useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code === 'Space' && e.target === document.body) {
         e.preventDefault()
-        dispatch({ type: state.isPlaying ? 'PAUSE' : 'PLAY' })
+        if (li.active) {
+          dispatch({ type: li.running ? 'LIVE_PAUSE' : 'LIVE_PLAY' })
+        } else {
+          dispatch({ type: state.isPlaying ? 'PAUSE' : 'PLAY' })
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [state.isPlaying, dispatch])
+  }, [state.isPlaying, li.active, li.running, dispatch])
 
   // Fetch levels on mount
   React.useEffect(() => {
@@ -165,25 +202,6 @@ function Sidebar() {
     })
   }
 
-  const actionName = (action: t.Action): string => {
-    switch (action) {
-      case t.Action.Up:
-        return 'Up'
-      case t.Action.Down:
-        return 'Down'
-      case t.Action.Left:
-        return 'Left'
-      case t.Action.Right:
-        return 'Right'
-      case t.Action.Pickup:
-        return 'Pickup'
-      case t.Action.Toggle:
-        return 'Toggle'
-      default:
-        return '?'
-    }
-  }
-
   return (
     <div className="sidebar">
       <h2>Boxworld</h2>
@@ -202,7 +220,7 @@ function Sidebar() {
         </select>
       </div>
 
-      {state.currentLevel && (
+      {state.currentLevel && !li.active && (
         <div className="sidebar-section">
           <label>Edit Mode</label>
           <div className="controls-row">
@@ -219,7 +237,7 @@ function Sidebar() {
         </div>
       )}
 
-      {state.currentLevel && state.episodes.length > 0 && (
+      {state.currentLevel && !li.active && state.episodes.length > 0 && (
         <div className="sidebar-section">
           <label>Episode</label>
           <select
@@ -244,6 +262,7 @@ function Sidebar() {
           <select
             value={selectedCheckpointId}
             onChange={(e) => setSelectedCheckpointId(e.target.value)}
+            disabled={li.active}
           >
             {state.checkpoints.map((cp) => (
               <option key={cp.id} value={cp.id}>
@@ -251,21 +270,74 @@ function Sidebar() {
               </option>
             ))}
           </select>
-          <button
-            disabled={state.inferenceLoading || !selectedCheckpointId}
-            onClick={() => {
-              const cp = state.checkpoints.find((c) => c.id === selectedCheckpointId)
-              if (!cp || !state.currentLevel) return
-              const url = `/checkpoints/boxworld_${cp.trainingSteps}_steps.onnx`
-              runAgent(state.currentLevel, url, dispatch)
-            }}
-          >
-            {state.inferenceLoading ? 'Running...' : 'Run Agent'}
-          </button>
+          {!li.active && (
+            <button
+              disabled={state.inferenceLoading || !selectedCheckpointId}
+              onClick={() => {
+                const cp = state.checkpoints.find((c) => c.id === selectedCheckpointId)
+                if (!cp || !state.currentLevel) return
+                const url = `/checkpoints/boxworld_${cp.trainingSteps}_steps.onnx`
+                startLiveAgent(url, agentRef, dispatch)
+              }}
+            >
+              {state.inferenceLoading ? 'Loading...' : 'Run Agent'}
+            </button>
+          )}
         </div>
       )}
 
-      {state.currentLevel && (
+      {li.active && (
+        <div className="sidebar-section">
+          <label>Live Inference</label>
+          <div className="controls-row">
+            <button
+              onClick={() => dispatch({ type: li.running ? 'LIVE_PAUSE' : 'LIVE_PLAY' })}
+              disabled={!!li.gameState?.done || li.stepCount >= 200}
+            >
+              {li.running ? '\u23F8' : '\u25B6'}
+            </button>
+            <button
+              onClick={stepOnce}
+              disabled={li.running || !!li.gameState?.done || li.stepCount >= 200}
+            >
+              &#9654;&#9654;
+            </button>
+            <button onClick={() => dispatch({ type: 'STOP_LIVE_INFERENCE' })}>Stop</button>
+          </div>
+          <div className="controls-row">
+            <label>Speed</label>
+            <input
+              type="range"
+              min={1}
+              max={20}
+              value={state.playbackSpeed}
+              onChange={(e) => dispatch({ type: 'SET_SPEED', speed: Number(e.target.value) })}
+            />
+            <span>{state.playbackSpeed} sps</span>
+          </div>
+          <div className="step-info">Click tiles to edit the level while the agent runs.</div>
+        </div>
+      )}
+
+      {li.active && li.gameState && (
+        <div className="sidebar-section">
+          <label>Step Info</label>
+          <div className="step-info">
+            <div>Step: {li.stepCount} / 200</div>
+            {li.lastAction !== null && <div>Action: {ACTION_NAMES[li.lastAction]}</div>}
+            <div>Reward: {li.gameState.reward.toFixed(3)}</div>
+            <div>
+              Position: ({li.gameState.agentPosition[0]}, {li.gameState.agentPosition[1]})
+            </div>
+            <div>Has Key: {li.gameState.inventory.hasKey ? 'Yes' : 'No'}</div>
+            <div>Done: {li.gameState.done ? 'Yes' : 'No'}</div>
+          </div>
+        </div>
+      )}
+
+      {li.active && li.lastQValues && <QValuesPanel qValues={li.lastQValues} />}
+
+      {!li.active && state.currentLevel && (
         <div className="sidebar-section">
           <label>Playback</label>
           <div className="controls-row">
@@ -312,14 +384,14 @@ function Sidebar() {
         </div>
       )}
 
-      {currentStepData && (
+      {!li.active && currentStepData && (
         <div className="sidebar-section">
           <label>Step Info</label>
           <div className="step-info">
             <div>
               Step: {state.currentStep} / {maxStep}
             </div>
-            <div>Action: {actionName(currentStepData.action)}</div>
+            <div>Action: {ACTION_NAMES[currentStepData.action]}</div>
             <div>Reward: {currentStepData.reward.toFixed(3)}</div>
             <div>
               Position: ({currentStepData.state.agentPosition[0]},{' '}
@@ -331,27 +403,7 @@ function Sidebar() {
         </div>
       )}
 
-      {currentStepData?.qValues && (
-        <div className="sidebar-section">
-          <label>Q-Values</label>
-          <div className="step-info">
-            {(
-              [
-                [t.Action.Up, 'Up'],
-                [t.Action.Down, 'Down'],
-                [t.Action.Left, 'Left'],
-                [t.Action.Right, 'Right'],
-                [t.Action.Pickup, 'Pickup'],
-                [t.Action.Toggle, 'Toggle'],
-              ] as [t.Action, string][]
-            ).map(([action, name]) => (
-              <div key={action}>
-                {name}: {currentStepData.qValues![action].toFixed(3)}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
+      {!li.active && currentStepData?.qValues && <QValuesPanel qValues={currentStepData.qValues} />}
     </div>
   )
 }
