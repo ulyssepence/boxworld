@@ -509,6 +509,54 @@ def test_multiple_runs_have_different_rewards(recorder):
     )
 
 
+def test_clear_db_preserves_checkpoints(recorder):
+    """Bug repro: clear_db() deletes from checkpoints table, wiping entries
+    registered by the exporter. After clear_db(), checkpoints and agents
+    should still be present — only steps and episodes should be cleared."""
+    # Simulate exporter registering agents + checkpoints
+    agent_id = recorder.register_agent("ppo_100000", 100000)
+    recorder.conn.execute(
+        "INSERT INTO checkpoints (id, agent_id, training_steps, onnx_path) VALUES (?, ?, ?, ?)",
+        ("ckpt1", agent_id, 100000, "/path/to/100000.onnx"),
+    )
+
+    agent_id2 = recorder.register_agent("ppo_200000", 200000)
+    recorder.conn.execute(
+        "INSERT INTO checkpoints (id, agent_id, training_steps, onnx_path) VALUES (?, ?, ?, ?)",
+        ("ckpt2", agent_id2, 200000, "/path/to/200000.onnx"),
+    )
+    recorder.conn.commit()
+
+    # Simulate recorder adding some episode data
+    recorder.conn.execute(
+        "INSERT INTO episodes (id, agent_id, level_id, total_reward, run_number) "
+        "VALUES (?, ?, ?, ?, ?)",
+        ("ep1", agent_id, "open_room", 0.5, 1),
+    )
+    recorder.conn.commit()
+
+    # Now clear_db (what record_all does before re-recording)
+    recorder.clear_db()
+
+    # Episodes and steps should be gone
+    cursor = recorder.conn.execute("SELECT COUNT(*) FROM episodes")
+    assert cursor.fetchone()[0] == 0
+
+    cursor = recorder.conn.execute("SELECT COUNT(*) FROM steps")
+    assert cursor.fetchone()[0] == 0
+
+    # Checkpoints and agents should be PRESERVED
+    cursor = recorder.conn.execute("SELECT COUNT(*) FROM checkpoints")
+    checkpoint_count = cursor.fetchone()[0]
+    assert checkpoint_count == 2, (
+        f"Expected 2 checkpoints to survive clear_db(), got {checkpoint_count}"
+    )
+
+    cursor = recorder.conn.execute("SELECT COUNT(*) FROM agents")
+    agent_count = cursor.fetchone()[0]
+    assert agent_count == 2, f"Expected 2 agents to survive clear_db(), got {agent_count}"
+
+
 def test_first_step_matches_agent_start(recorder):
     """step_number=1's agentPosition must match agentStart from level_data."""
     env, grid = _make_corridor_env()
