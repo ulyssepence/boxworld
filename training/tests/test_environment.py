@@ -67,6 +67,7 @@ def _make_simple_env():
             env._grid[y][x] = BoxworldEnv.FLOOR
     env._agent_pos = [2, 2]
     env._has_key = False
+    env._solve_subgoals()
     return env
 
 
@@ -169,13 +170,11 @@ def test_toggle_door_without_key():
     assert env._grid[1][2] == BoxworldEnv.DOOR  # door stays
 
 
-def test_toggle_uses_last_direction():
+def test_toggle_opens_any_adjacent_door():
     env = _make_simple_env()
     env._has_key = True
-    # Place door to the RIGHT of agent at (3, 2)
+    # Place door to the RIGHT of agent at (3, 2) — toggle checks all 4 directions
     env._grid[2][3] = BoxworldEnv.DOOR
-    # Set last direction to RIGHT
-    env._last_direction = BoxworldEnv.RIGHT
     env.step(BoxworldEnv.TOGGLE)
     assert env._grid[2][3] == BoxworldEnv.FLOOR
 
@@ -264,7 +263,7 @@ def test_different_seeds_produce_different_layouts():
 
 def test_load_level_from_json():
     level_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "data", "levels", "four_rooms.json"
+        os.path.dirname(__file__), "..", "..", "data", "levels", "door_key.json"
     )
     level_path = os.path.normpath(level_path)
     env = BoxworldEnv(level_path=level_path)
@@ -272,12 +271,12 @@ def test_load_level_from_json():
     assert env._width == 10
     assert env._height == 10
     assert obs.shape == (103,)
-    assert info["agent_pos"] == [6, 1]
+    assert info["agent_pos"] == [1, 1]
 
 
 def test_load_level_grid_matches_json():
     level_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "data", "levels", "four_rooms.json"
+        os.path.dirname(__file__), "..", "..", "data", "levels", "door_key.json"
     )
     level_path = os.path.normpath(level_path)
     env = BoxworldEnv(level_path=level_path)
@@ -497,7 +496,26 @@ def _make_door_env():
     env._has_key = False
     env._steps = 0
     env._last_direction = BoxworldEnv.UP
+    env._solve_subgoals()
     return env
+
+
+def test_bfs_distance_can_reach_door_target():
+    """BFS should be able to reach a door cell when it is the target."""
+    env = _make_door_env()
+    # Agent at (1,1), door at (2,2). BFS from agent to door should find it.
+    # Path: (1,1) -> (2,1) -> (2,2) is blocked because (2,2) is a door.
+    # But when door is the *target*, BFS should still return distance.
+    dist = env._bfs_distance(1, 1, 2, 2)
+    assert dist == 2.0, f"Expected BFS distance to door target = 2.0, got {dist}"
+
+
+def test_bfs_distance_does_not_traverse_through_doors():
+    """BFS should not traverse *through* a door to reach cells beyond it."""
+    env = _make_door_env()
+    # Goal at (2,3) is behind door at (2,2). Without opening door, can't reach goal.
+    dist = env._bfs_distance(1, 1, 2, 3)
+    assert dist is None, "BFS should not traverse through door to reach goal"
 
 
 def test_goal_distance_without_key_blocked_by_door():
@@ -542,25 +560,20 @@ def test_shaping_toward_key_when_goal_blocked():
     # Agent at (1,1), key at (3,1), goal blocked
     # Move RIGHT toward key: (1,1) -> (2,1)
     _, reward, _, _, _ = env.step(BoxworldEnv.RIGHT)
-    # Step penalty -0.01 + shaping toward key: 0.1 * (2 - 1) = +0.1
-    assert reward == pytest.approx(-0.01 + 0.1)
+    # Step penalty -0.01 + shaping toward key: 0.05 * (2 - 1) = +0.05
+    assert reward == pytest.approx(-0.01 + 0.05)
 
 
 def test_shaping_toward_goal_when_has_key():
-    """When agent has a key and goal is reachable through door, shape toward goal."""
+    """When agent has a key, subgoal shaping guides toward current subgoal."""
     env = _make_door_env()
     env._has_key = True
-    env._agent_pos = [2, 1]  # one step from door, 2 from goal
-    # Move DOWN toward door/goal: (2,1) -> blocked by door
-    # Actually the door blocks movement, so agent stays at (2,1)
-    # Let's instead test from (1,1) moving right toward (2,1) which is closer to goal
     env._agent_pos = [1, 1]
-    # Goal distance with key: (1,1)->(2,1)->(2,2 door)->(2,3 goal) = 3
-    assert env._goal_distance() == 3.0
+    # Subgoals computed at reset: [("key",(3,1)), ("door",(2,2)), ("goal",(2,3))]
+    # Since has_key already True, subgoal_index=0 still points to key at (3,1)
     _, reward, _, _, _ = env.step(BoxworldEnv.RIGHT)
-    # Agent moves to (2,1). New goal dist = 2. Old was 3.
-    # Step penalty -0.01 + shaping: 0.1 * (3 - 2) = +0.1
-    assert reward == pytest.approx(-0.01 + 0.1)
+    # Agent moves to (2,1). Shaping toward key (3,1): 0.05 * (2-1) = 0.05
+    assert reward == pytest.approx(-0.01 + 0.05)
 
 
 def test_pickup_reward_bonus():
@@ -662,7 +675,7 @@ def test_generated_maze_minimum_distance():
 
 
 def test_generated_maze_sometimes_has_doors():
-    """Some generated mazes should include doors and keys (~30% chance)."""
+    """Some generated mazes should include doors and keys (~60% chance)."""
     env = BoxworldEnv()
     door_count = 0
     for seed in range(100):
@@ -674,12 +687,12 @@ def test_generated_maze_sometimes_has_doors():
         )
         if has_door:
             door_count += 1
-    # With 30% chance, expect ~30 but allow variance
-    assert door_count >= 5, f"Only {door_count}/100 mazes had doors"
+    # With 60% chance (1-40%), expect ~60 but allow variance
+    assert door_count >= 15, f"Only {door_count}/100 mazes had doors"
 
 
 def test_generated_maze_sometimes_has_lava():
-    """Some generated mazes should include lava (~20% chance)."""
+    """Some generated mazes should include lava (~30% chance)."""
     env = BoxworldEnv()
     lava_count = 0
     for seed in range(100):
@@ -691,7 +704,7 @@ def test_generated_maze_sometimes_has_lava():
         )
         if has_lava:
             lava_count += 1
-    assert lava_count >= 3, f"Only {lava_count}/100 mazes had lava"
+    assert lava_count >= 5, f"Only {lava_count}/100 mazes had lava"
 
 
 def test_generated_maze_deterministic():
@@ -729,3 +742,179 @@ def _find_cell(env: BoxworldEnv, cell_type: int) -> tuple[int, int]:
             if env._grid[y][x] == cell_type:
                 return (x, y)
     raise ValueError(f"Cell type {cell_type} not found")
+
+
+def _count_cells(env: BoxworldEnv, cell_type: int) -> int:
+    """Count cells of a given type."""
+    return sum(
+        1 for y in range(env._height) for x in range(env._width) if env._grid[y][x] == cell_type
+    )
+
+
+# ---------------------------------------------------------------------------
+# Subgoal solver tests
+# ---------------------------------------------------------------------------
+
+
+def test_solve_subgoals_simple_no_doors():
+    """Level with no doors should have a single goal subgoal."""
+    env = _make_simple_env()
+    env._grid[1][2] = BoxworldEnv.GOAL
+    env._solve_subgoals()
+    assert len(env._subgoals) == 1
+    assert env._subgoals[0] == ("goal", (2, 1))
+
+
+def test_solve_subgoals_single_door():
+    """Level with one key+door should produce key→door→goal chain."""
+    env = _make_door_env()
+    # _make_door_env calls reset which calls _solve_subgoals
+    assert len(env._subgoals) == 3
+    assert env._subgoals[0] == ("key", (3, 1))
+    assert env._subgoals[1] == ("door", (2, 2))
+    assert env._subgoals[2] == ("goal", (2, 3))
+
+
+def test_solve_subgoals_door_key():
+    """door_key level should produce key→door→goal chain."""
+    level_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "data", "levels", "door_key.json"
+    )
+    level_path = os.path.normpath(level_path)
+    env = BoxworldEnv(level_path=level_path)
+    env.reset()
+    assert len(env._subgoals) == 3
+    assert env._subgoals[0][0] == "key"
+    assert env._subgoals[1][0] == "door"
+    assert env._subgoals[2][0] == "goal"
+
+
+def test_solve_subgoals_two_rooms():
+    """two_rooms level should produce key→door→goal chain."""
+    level_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "data", "levels", "two_rooms.json"
+    )
+    level_path = os.path.normpath(level_path)
+    env = BoxworldEnv(level_path=level_path)
+    env.reset()
+    assert len(env._subgoals) == 3
+    assert env._subgoals[0][0] == "key"
+    assert env._subgoals[1][0] == "door"
+    assert env._subgoals[2][0] == "goal"
+
+
+def test_subgoal_index_advances_on_key_pickup():
+    """Subgoal index should advance when agent picks up a key matching subgoal."""
+    env = _make_door_env()
+    assert env._subgoal_index == 0
+    assert env._subgoals[0][0] == "key"
+    # Move agent to key position and pick up
+    env._agent_pos = [3, 1]
+    env.step(BoxworldEnv.PICKUP)
+    assert env._has_key is True
+    assert env._subgoal_index == 1
+
+
+def test_subgoal_index_advances_on_door_toggle():
+    """Subgoal index should advance when agent toggles a door matching subgoal."""
+    env = _make_door_env()
+    # Advance past key subgoal first
+    env._agent_pos = [3, 1]
+    env.step(BoxworldEnv.PICKUP)
+    assert env._subgoal_index == 1
+    assert env._subgoals[1][0] == "door"
+    # Move adjacent to door and toggle
+    env._agent_pos = [2, 1]
+    env._last_direction = BoxworldEnv.DOWN
+    env.step(BoxworldEnv.TOGGLE)
+    assert env._grid[2][2] == BoxworldEnv.FLOOR  # door opened
+    assert env._subgoal_index == 2
+
+
+def test_solve_subgoals_no_goal():
+    """Level with no goal should produce empty subgoals."""
+    env = _make_simple_env()
+    # No goal on the grid
+    env._solve_subgoals()
+    assert len(env._subgoals) == 0
+
+
+# ---------------------------------------------------------------------------
+# Multi-door procedural generation tests
+# ---------------------------------------------------------------------------
+
+
+def test_generated_maze_sometimes_has_multiple_doors():
+    """Some generated mazes should have multiple door/key pairs."""
+    env = BoxworldEnv()
+    multi_door_count = 0
+    for seed in range(200):
+        env.reset(seed=seed)
+        num_doors = _count_cells(env, BoxworldEnv.DOOR)
+        if num_doors >= 2:
+            multi_door_count += 1
+    # With 25% chance of 2+ doors, expect ~50 out of 200
+    assert multi_door_count >= 5, f"Only {multi_door_count}/200 mazes had multiple doors"
+
+
+def test_generated_maze_multi_door_has_matching_keys():
+    """When a maze has N doors, it should also have N keys."""
+    env = BoxworldEnv()
+    for seed in range(100):
+        env.reset(seed=seed)
+        num_doors = _count_cells(env, BoxworldEnv.DOOR)
+        num_keys = _count_cells(env, BoxworldEnv.KEY)
+        assert num_keys == num_doors, f"Seed {seed}: {num_doors} doors but {num_keys} keys"
+
+
+# ---------------------------------------------------------------------------
+# Weighted level sampling tests
+# ---------------------------------------------------------------------------
+
+
+def test_weighted_level_sampling():
+    """Weighted sampling should favor levels with higher weights."""
+    levels_dir = os.path.join(os.path.dirname(__file__), "..", "..", "data", "levels")
+    levels_dir = os.path.normpath(levels_dir)
+    weights = {
+        "open_room": 0.0,  # never selected
+        "simple_corridor": 0.0,
+        "lava_crossing": 0.0,
+        "door_key": 0.0,
+        "two_rooms": 1.0,  # always selected
+    }
+    env = BoxworldEnv(
+        levels_dir=levels_dir,
+        designed_level_prob=1.0,
+        level_weights=weights,
+    )
+    # All resets should pick two_rooms (has door at grid[5][5])
+    for seed in range(10):
+        env.reset(seed=seed)
+        assert env._grid[5][5] == BoxworldEnv.DOOR, f"Seed {seed}: expected two_rooms"
+
+
+# ---------------------------------------------------------------------------
+# Door-adjacent bonus tests
+# ---------------------------------------------------------------------------
+
+
+def test_door_adjacent_no_bonus():
+    """Door-adjacent bonus is disabled — moving near a door gives only shaping."""
+    env = _make_door_env()
+    env._has_key = True
+    env._agent_pos = [1, 1]
+    # Move RIGHT to (2,1) which is adjacent to door at (2,2)
+    _, reward, _, _, _ = env.step(BoxworldEnv.RIGHT)
+    # Shaping toward key subgoal (3,1): 0.05*(2-1) = 0.05, no door-adjacent bonus
+    assert reward == pytest.approx(-0.01 + 0.05)
+
+
+def test_no_door_adjacent_bonus_without_key():
+    """Moving adjacent to a door without a key gives no bonus."""
+    env = _make_door_env()
+    assert env._has_key is False
+    env._agent_pos = [1, 1]
+    _, reward, _, _, _ = env.step(BoxworldEnv.RIGHT)
+    # Shaping toward key subgoal (3,1): 0.05*(2-1) = 0.05, no door bonus
+    assert reward == pytest.approx(-0.01 + 0.05)

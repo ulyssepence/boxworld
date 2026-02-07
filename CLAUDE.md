@@ -1,16 +1,16 @@
 # Boxworld
 
-RL training + web visualization for a grid-based puzzle game. DQN agent learns to navigate 10x10 grids with walls, doors, keys, lava, and goals. Python backend trains with Gymnasium + Stable-Baselines3, records episodes to SQLite, exports models to ONNX. TypeScript frontend visualizes with React Three Fiber and runs live in-browser inference via ONNX Runtime Web.
+RL training + web visualization for a grid-based puzzle game. PPO agent learns to navigate 10x10 grids with walls, doors, keys, lava, and goals. Python backend trains with Gymnasium + Stable-Baselines3, records episodes to SQLite, exports models to ONNX. TypeScript frontend visualizes with React Three Fiber and runs live in-browser inference via ONNX Runtime Web.
 
 ## Quick Reference
 
 ```bash
 # Python (from training/)
-uv run python main.py train          # Train DQN agent (500k steps)
+uv run python main.py train          # Train PPO agent (1M steps)
 uv run python main.py export         # Export checkpoints to ONNX
 uv run python main.py record         # Record episodes to SQLite
 uv run python main.py all            # Full pipeline: train → export → record
-uv run pytest -v                     # Run all 63 Python tests
+uv run pytest -v                     # Run all 96 Python tests
 
 # TypeScript (from visualize/)
 npm run build                        # Bundle frontend + copy ONNX WASM files to static/
@@ -23,7 +23,7 @@ npx playwright test --workers 1      # Sequential (needed for visual/agent tests
 
 The agent navigates a 10x10 grid. Cell types: Floor (walkable), Wall (blocks movement), Door (blocks until toggled with key), Key (pick up with Pickup action), Goal (reach to win), Lava (instant death). Six actions: Up, Down, Left, Right, Pickup (grab key if standing on one), Toggle (open adjacent door if holding key, consumes key).
 
-**Rewards:** Goal = +1.0, Lava = -1.0, each step = -0.01, max 200 steps then truncated at -2.0. Reward shaping adds +/-0.1 based on BFS shortest-path distance change toward the goal (accounts for walls and doors).
+**Rewards:** Goal = +1.0, Lava = -1.0, each step = -0.01, key pickup = +0.2, door toggle = +0.2, max 200 steps then truncated at -2.0. Reward shaping uses subgoal-chain BFS: at reset, `_solve_subgoals()` computes key→door→...→goal sequence. Bidirectional shaping: +0.05 per BFS step closer, -0.05 per BFS step farther from current subgoal. Uses `_bfs_distance_safe` (avoids lava) so shaping never incentivizes walking through lava.
 
 **Observation:** Flat Float32 array of size `width*height + 3` = 103 for 10x10. Encoding: `[grid[0][0], ..., grid[h-1][w-1], agent_x, agent_y, has_key]`.
 
@@ -43,13 +43,13 @@ These must stay in sync across Python and TypeScript or inference will silently 
 
 | File | Purpose | Key exports |
 |------|---------|-------------|
-| `environment.py` | Gymnasium env — grid world with walls, doors, keys, lava, goals | `BoxworldEnv` (reset, step, _get_obs, _generate_level, _load_level) |
-| `train.py` | DQN training with SB3 | `Trainer`, `TrainerConfig` (dataclass with hyperparams) |
+| `environment.py` | Gymnasium env — grid world with walls, doors, keys, lava, goals | `BoxworldEnv` (reset, step, _get_obs, _generate_level, _load_level, _solve_subgoals) |
+| `train.py` | PPO training with SB3 | `Trainer`, `TrainerConfig` (dataclass with hyperparams) |
 | `record.py` | Play episodes with trained models, store every step to SQLite | `Recorder` (record_all, record_episode) |
-| `export.py` | Extract Q-network from SB3 checkpoint, export to ONNX | `Exporter` (export_checkpoint, export_all, verify_export) |
+| `export.py` | Extract actor network from SB3 checkpoint, export to ONNX | `Exporter`, `OnnxablePolicy` (export_checkpoint, export_all, verify_export) |
 | `main.py` | Argparse CLI entry point | Subcommands: train, record, export, all |
 
-Tests: `tests/test_environment.py` (44), `tests/test_train.py` (5), `tests/test_record.py` (14), `tests/test_export.py` (7), `tests/test_bugs.py` (4)
+Tests: `tests/test_environment.py` (69), `tests/test_train.py` (5), `tests/test_record.py` (11), `tests/test_export.py` (7), `tests/test_bugs.py` (4), `tests/test_e2e.py` (5)
 
 ### TypeScript — `visualize/src/`
 
@@ -77,11 +77,11 @@ Tests: `tests/e2e/smoke.spec.ts` (9), `tests/e2e/visual.spec.ts` (2), `tests/e2e
 ```
 data/
 ├── levels/              # Hand-designed level JSON files (5 levels)
+│   ├── open_room.json
 │   ├── simple_corridor.json
-│   ├── dead_end.json
-│   ├── four_rooms.json
-│   ├── key_puzzle.json
-│   └── lava_maze.json
+│   ├── lava_crossing.json
+│   ├── door_key.json
+│   └── two_rooms.json
 ├── checkpoints/         # SB3 .zip + ONNX .onnx (10k to 500k steps, every 10k)
 └── db.sqlite            # Recorded episodes (SQLite WAL mode)
 ```
@@ -116,7 +116,7 @@ data/
 
 **Checkpoint naming** — Pattern: `boxworld_{steps}_steps.{zip,onnx}`. The `.zip` is SB3 format, `.onnx` is for browser. URL served at `/checkpoints/boxworld_{steps}_steps.onnx`.
 
-**Toggle door mechanics differ** — Python toggles door only in `_last_direction`. TypeScript `play.ts` toggles ANY adjacent door (all 4 directions). This is a known discrepancy.
+**Toggle door mechanics** — Both Python and TypeScript toggle ANY adjacent door (all 4 directions) when the agent has a key.
 
 **Recording records state BEFORE action** — Each step's `state_json` is the state that led to the action, not the resulting state.
 
@@ -130,4 +130,4 @@ data/
 
 **record.py --min-steps** — Use `--min-steps 500000` to only record episodes from the best checkpoint, skipping early poorly-trained ones.
 
-**Training quality** — The 500k-step model solves simple levels from convenient starting positions but struggles with the full simple_corridor from `agentStart`. It was trained with 30% designed levels mixed in (`designed_level_prob=0.3`).
+**Training quality** — Default is 2M steps with [128, 128] network, bidirectional lava-safe subgoal-chain shaping (±0.05), multi-door procedural levels, and equal designed level sampling (all weights 1.0). Trained with 90% designed levels mixed in (`designed_level_prob=0.9`), `n_steps=512`, `ent_coef=0.05`. All 5 designed levels solved (verified by `test_e2e.py`).

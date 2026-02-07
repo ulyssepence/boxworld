@@ -12,6 +12,12 @@ database.initialize()
 const app = express()
 app.use(express.json())
 
+// Disable caching for all responses (dev server)
+app.use((_req, res, next) => {
+  res.set('Cache-Control', 'no-store')
+  next()
+})
+
 // API endpoints
 app.get('/api/checkpoints', (_req, res) => {
   res.json({ checkpoints: database.getCheckpoints() })

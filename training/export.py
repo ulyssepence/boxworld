@@ -1,4 +1,4 @@
-"""ONNX export for SB3 DQN checkpoints."""
+"""ONNX export for SB3 PPO checkpoints."""
 
 from __future__ import annotations
 
@@ -11,11 +11,26 @@ import uuid
 import numpy as np
 import onnxruntime as ort
 import torch
-from stable_baselines3 import DQN
+from stable_baselines3 import PPO
+
+
+class OnnxablePolicy(torch.nn.Module):
+    """Wraps PPO's actor network for ONNX export (obs → action logits)."""
+
+    def __init__(self, policy):
+        super().__init__()
+        self.features_extractor = policy.features_extractor
+        self.mlp_extractor = policy.mlp_extractor
+        self.action_net = policy.action_net
+
+    def forward(self, obs):
+        features = self.features_extractor(obs)
+        latent_pi = self.mlp_extractor.forward_actor(features)
+        return self.action_net(latent_pi)
 
 
 class Exporter:
-    """Exports Stable-Baselines3 DQN checkpoints to ONNX format.
+    """Exports Stable-Baselines3 PPO checkpoints to ONNX format.
 
     Optionally registers exported checkpoints in a SQLite database.
     """
@@ -71,21 +86,21 @@ class Exporter:
         output_onnx_path: str,
         obs_size: int = 103,
     ) -> str:
-        """Load an SB3 DQN checkpoint, extract the Q-network, and export to ONNX.
+        """Load an SB3 PPO checkpoint, extract the actor network, and export to ONNX.
 
         Returns the output ONNX path.
         """
-        model = DQN.load(sb3_model_path)
-        q_net = model.policy.q_net
-        q_net.eval()
+        model = PPO.load(sb3_model_path)
+        policy_net = OnnxablePolicy(model.policy)
+        policy_net.eval()
 
         dummy_input = torch.randn(1, obs_size)
         torch.onnx.export(
-            q_net,
+            policy_net,
             dummy_input,
             output_onnx_path,
             input_names=["obs"],
-            output_names=["q_values"],
+            output_names=["q_values"],  # keep name for TS compat
             dynamic_axes={"obs": {0: "batch"}, "q_values": {0: "batch"}},
             external_data=False,
         )
@@ -117,7 +132,7 @@ class Exporter:
                 match = re.search(r"boxworld_(\d+)_steps", basename)
                 if match:
                     training_steps = int(match.group(1))
-                    agent_name = f"dqn_{training_steps}"
+                    agent_name = f"ppo_{training_steps}"
                     agent_id = uuid.uuid4().hex
                     self.conn.execute(
                         "INSERT INTO agents (id, name, training_steps) VALUES (?, ?, ?)",
@@ -141,21 +156,21 @@ class Exporter:
         sb3_model_path: str,
         test_obs: np.ndarray | None = None,
     ) -> bool:
-        """Verify that ONNX output matches the SB3 Q-network output.
+        """Verify that ONNX output matches the SB3 actor network output.
 
         Returns True if outputs match within 1e-5 tolerance.
         """
-        model = DQN.load(sb3_model_path)
+        model = PPO.load(sb3_model_path)
 
         if test_obs is None:
             obs_size = model.observation_space.shape[0]
             test_obs = np.random.rand(obs_size).astype(np.float32)
 
-        # SB3 / PyTorch side
-        q_net = model.policy.q_net
-        q_net.eval()
+        # SB3 / PyTorch side — use OnnxablePolicy to match export
+        policy_net = OnnxablePolicy(model.policy)
+        policy_net.eval()
         with torch.no_grad():
-            sb3_out = q_net(torch.as_tensor(test_obs).unsqueeze(0)).detach().numpy()
+            sb3_out = policy_net(torch.as_tensor(test_obs).unsqueeze(0)).detach().numpy()
 
         # ONNX side
         session = ort.InferenceSession(onnx_path)
