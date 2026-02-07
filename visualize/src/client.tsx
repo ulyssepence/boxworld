@@ -28,8 +28,8 @@ function GameView() {
 
   const li = state.liveInference
 
-  if (li.active) {
-    // Live inference mode: display currentLevel (shared mutable grid), agent from gameState
+  if (li.active || state.viewMode === 'inference') {
+    // Inference mode: display currentLevel (shared mutable grid), agent from gameState
     const agentPos: [number, number] = li.gameState ? li.gameState.agentPosition : level.agentStart
     const prevAgentPos = li.prevAgentPosition ?? undefined
 
@@ -53,7 +53,7 @@ function GameView() {
     )
   }
 
-  // Replay mode (unchanged)
+  // Replay mode
   const episode = state.episodes[state.currentEpisodeIndex]
   const currentStepData = episode?.steps[state.currentStep]
   const prevStepData = state.currentStep > 0 ? episode?.steps[state.currentStep - 1] : undefined
@@ -124,8 +124,8 @@ const ACTION_NAMES: Record<t.Action, string> = {
 
 function QValuesPanel({ qValues }: { qValues: t.QValues }) {
   return (
-    <div className="sidebar-section">
-      <label>Q-Values</label>
+    <div className="overlay-panel">
+      <div className="panel-label">Q-Values</div>
       <div className="step-info">
         {(
           [
@@ -146,101 +146,76 @@ function QValuesPanel({ qValues }: { qValues: t.QValues }) {
   )
 }
 
-function Sidebar() {
+function StepInfoPanel({
+  stepLabel,
+  action,
+  reward,
+  position,
+  hasKey,
+  done,
+}: {
+  stepLabel: string
+  action: string | null
+  reward: string
+  position: [number, number]
+  hasKey: boolean
+  done: boolean
+}) {
+  return (
+    <div className="overlay-panel">
+      <div className="panel-label">Step Info</div>
+      <div className="step-info">
+        <div>Step: {stepLabel}</div>
+        {action && <div>Action: {action}</div>}
+        <div>Reward: {reward}</div>
+        <div>
+          Position: ({position[0]}, {position[1]})
+        </div>
+        <div>Has Key: {hasKey ? 'Yes' : 'No'}</div>
+        <div>Done: {done ? 'Yes' : 'No'}</div>
+      </div>
+    </div>
+  )
+}
+
+function SpeedControls() {
   const [state, dispatch] = util.useApp()
-  const { agentRef, stepOnce } = util.useLiveInference()
-  const [selectedCheckpointId, setSelectedCheckpointId] = React.useState<string>('')
-
-  const li = state.liveInference
-
-  // Space key toggles play/pause
-  React.useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && e.target === document.body) {
-        e.preventDefault()
-        if (li.active) {
-          dispatch({ type: li.running ? 'LIVE_PAUSE' : 'LIVE_PLAY' })
-        } else {
-          dispatch({ type: state.isPlaying ? 'PAUSE' : 'PLAY' })
+  return (
+    <>
+      <button
+        className="speed-btn"
+        onClick={() => dispatch({ type: 'SET_SPEED', speed: Math.max(1, state.playbackSpeed - 1) })}
+        disabled={state.playbackSpeed <= 1}
+      >
+        -
+      </button>
+      <span className="speed-label">{state.playbackSpeed}×</span>
+      <button
+        className="speed-btn"
+        onClick={() =>
+          dispatch({ type: 'SET_SPEED', speed: Math.min(20, state.playbackSpeed + 1) })
         }
-      }
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [state.isPlaying, li.active, li.running, dispatch])
+        disabled={state.playbackSpeed >= 20}
+      >
+        +
+      </button>
+    </>
+  )
+}
 
-  // Fetch levels on mount
-  React.useEffect(() => {
-    api.fetchLevels().then((levels) => {
-      dispatch({ type: 'LOAD_LEVELS', levels })
-    })
-    api.fetchCheckpoints().then((checkpoints) => {
-      dispatch({ type: 'LOAD_CHECKPOINTS', checkpoints })
-    })
-  }, [dispatch])
-
-  // Auto-select the best (highest training steps) checkpoint when checkpoints load
-  React.useEffect(() => {
-    if (state.checkpoints.length > 0 && !selectedCheckpointId) {
-      setSelectedCheckpointId(state.checkpoints[state.checkpoints.length - 1].id)
-    }
-  }, [state.checkpoints, selectedCheckpointId])
+function RecordingsTab() {
+  const [state, dispatch] = util.useApp()
 
   const episode = state.episodes[state.currentEpisodeIndex]
-  const currentStepData = episode?.steps[state.currentStep]
   const maxStep = episode ? Math.max(0, episode.steps.length - 1) : 0
 
-  const handleLevelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const id = e.target.value
-    if (!id) return
-    api.fetchLevel(id).then((data) => {
-      if (!data.level) {
-        console.error('Level not found:', id, data)
-        return
-      }
-      dispatch({ type: 'LOAD_LEVEL', level: data.level, episodes: data.episodes })
-    })
-  }
-
   return (
-    <div className="sidebar">
-      <h2>Boxworld</h2>
-
-      <div className="sidebar-section">
-        <label>Level</label>
-        <select onChange={handleLevelChange} defaultValue="">
-          <option value="" disabled>
-            Select a level...
-          </option>
-          {state.levels.map((l) => (
-            <option key={l.id} value={l.id}>
-              {l.name}
-            </option>
-          ))}
-        </select>
-      </div>
-
-      {state.currentLevel && !li.active && (
-        <div className="sidebar-section">
-          <label>Edit Mode</label>
-          <div className="controls-row">
-            <button onClick={() => dispatch({ type: 'TOGGLE_EDIT_MODE' })}>
-              {state.editMode ? 'Exit Edit' : 'Edit Level'}
-            </button>
-            {state.editMode && (
-              <button onClick={() => dispatch({ type: 'RESET_LEVEL' })}>Reset</button>
-            )}
-          </div>
-          {state.editMode && (
-            <div className="step-info">Click tiles: Floor &rarr; Wall &rarr; Goal &rarr; Floor</div>
-          )}
-        </div>
-      )}
-
-      {state.currentLevel && !li.active && state.episodes.length > 0 && (
-        <div className="sidebar-section">
+    <div className="tab-content">
+      {state.episodes.length > 0 && (
+        <div className="overlay-row">
           <label>Episode</label>
           <select
+            className="overlay-select"
             value={state.currentEpisodeIndex}
             onChange={(e) => dispatch({ type: 'SET_EPISODE', index: Number(e.target.value) })}
           >
@@ -255,14 +230,76 @@ function Sidebar() {
           </select>
         </div>
       )}
+      <div className="overlay-row">
+        <button
+          onClick={() => dispatch({ type: 'STEP_BACKWARD' })}
+          disabled={state.currentStep <= 0}
+        >
+          &#9664;&#9664;
+        </button>
+        <button
+          onClick={() => dispatch({ type: state.isPlaying ? 'PAUSE' : 'PLAY' })}
+          disabled={!episode}
+        >
+          {state.isPlaying ? '\u23F8' : '\u25B6'}
+        </button>
+        <button
+          onClick={() => dispatch({ type: 'STEP_FORWARD' })}
+          disabled={state.currentStep >= maxStep}
+        >
+          &#9654;&#9654;
+        </button>
+        {episode && (
+          <input
+            type="range"
+            min={0}
+            max={maxStep}
+            value={state.currentStep}
+            onChange={(e) => dispatch({ type: 'SEEK', step: Number(e.target.value) })}
+            className="seek-slider"
+          />
+        )}
+        <SpeedControls />
+      </div>
+    </div>
+  )
+}
 
-      {state.currentLevel && state.checkpoints.length > 0 && (
-        <div className="sidebar-section">
-          <label>Agent Inference</label>
+function InferenceTab({
+  agentRef,
+  stepOnce,
+}: {
+  agentRef: React.MutableRefObject<ml.Agent | null>
+  stepOnce: () => Promise<void>
+}) {
+  const [state, dispatch] = util.useApp()
+  const [selectedCheckpointId, setSelectedCheckpointId] = React.useState<string>('')
+
+  const li = state.liveInference
+
+  // Auto-select best checkpoint
+  React.useEffect(() => {
+    if (state.checkpoints.length > 0 && !selectedCheckpointId) {
+      setSelectedCheckpointId(state.checkpoints[state.checkpoints.length - 1].id)
+    }
+  }, [state.checkpoints, selectedCheckpointId])
+
+  // Auto-restart inference on cell edit
+  React.useEffect(() => {
+    if (state.editVersion === 0) return
+    if (state.viewMode !== 'inference' || !agentRef.current) return
+    dispatch({ type: 'RESTART_LIVE_INFERENCE' })
+  }, [state.editVersion])
+
+  return (
+    <div className="tab-content">
+      {state.checkpoints.length > 0 && (
+        <div className="overlay-row">
+          <label>Checkpoint</label>
           <select
+            className="overlay-select"
             value={selectedCheckpointId}
             onChange={(e) => setSelectedCheckpointId(e.target.value)}
-            disabled={li.active}
           >
             {state.checkpoints.map((cp) => (
               <option key={cp.id} value={cp.id}>
@@ -270,7 +307,7 @@ function Sidebar() {
               </option>
             ))}
           </select>
-          {!li.active && (
+          {!li.active ? (
             <button
               disabled={state.inferenceLoading || !selectedCheckpointId}
               onClick={() => {
@@ -282,128 +319,202 @@ function Sidebar() {
             >
               {state.inferenceLoading ? 'Loading...' : 'Run Agent'}
             </button>
+          ) : (
+            <button
+              disabled={state.inferenceLoading || !selectedCheckpointId}
+              onClick={() => {
+                const cp = state.checkpoints.find((c) => c.id === selectedCheckpointId)
+                if (!cp || !state.currentLevel) return
+                const url = `/checkpoints/boxworld_${cp.trainingSteps}_steps.onnx`
+                startLiveAgent(url, agentRef, dispatch)
+              }}
+            >
+              Restart
+            </button>
           )}
         </div>
       )}
-
       {li.active && (
-        <div className="sidebar-section">
-          <label>Live Inference</label>
-          <div className="controls-row">
-            <button
-              onClick={() => dispatch({ type: li.running ? 'LIVE_PAUSE' : 'LIVE_PLAY' })}
-              disabled={!!li.gameState?.done || li.stepCount >= 200}
-            >
-              {li.running ? '\u23F8' : '\u25B6'}
-            </button>
-            <button
-              onClick={stepOnce}
-              disabled={li.running || !!li.gameState?.done || li.stepCount >= 200}
-            >
-              &#9654;&#9654;
-            </button>
-            <button onClick={() => dispatch({ type: 'STOP_LIVE_INFERENCE' })}>Stop</button>
-          </div>
-          <div className="controls-row">
-            <label>Speed</label>
-            <input
-              type="range"
-              min={1}
-              max={20}
-              value={state.playbackSpeed}
-              onChange={(e) => dispatch({ type: 'SET_SPEED', speed: Number(e.target.value) })}
-            />
-            <span>{state.playbackSpeed} sps</span>
-          </div>
-          <div className="step-info">Click tiles to edit the level while the agent runs.</div>
+        <div className="overlay-row">
+          <button
+            onClick={() => dispatch({ type: li.running ? 'LIVE_PAUSE' : 'LIVE_PLAY' })}
+            disabled={!!li.gameState?.done || li.stepCount >= 200}
+          >
+            {li.running ? '\u23F8' : '\u25B6'}
+          </button>
+          <button
+            onClick={stepOnce}
+            disabled={li.running || !!li.gameState?.done || li.stepCount >= 200}
+          >
+            &#9654;&#9654;
+          </button>
+          <button onClick={() => dispatch({ type: 'STOP_LIVE_INFERENCE' })}>Stop</button>
+          <SpeedControls />
         </div>
       )}
+      <div className="edit-hint">Click tiles to edit the level. Agent auto-restarts on edits.</div>
+    </div>
+  )
+}
 
-      {li.active && li.gameState && (
-        <div className="sidebar-section">
-          <label>Step Info</label>
-          <div className="step-info">
-            <div>Step: {li.stepCount} / 200</div>
-            {li.lastAction !== null && <div>Action: {ACTION_NAMES[li.lastAction]}</div>}
-            <div>Reward: {li.gameState.reward.toFixed(3)}</div>
-            <div>
-              Position: ({li.gameState.agentPosition[0]}, {li.gameState.agentPosition[1]})
-            </div>
-            <div>Has Key: {li.gameState.inventory.hasKey ? 'Yes' : 'No'}</div>
-            <div>Done: {li.gameState.done ? 'Yes' : 'No'}</div>
-          </div>
-        </div>
-      )}
+function Overlay() {
+  const [state, dispatch] = util.useApp()
+  const { agentRef, stepOnce } = util.useLiveInference()
 
-      {li.active && li.lastQValues && <QValuesPanel qValues={li.lastQValues} />}
+  const li = state.liveInference
 
-      {!li.active && state.currentLevel && (
-        <div className="sidebar-section">
-          <label>Playback</label>
-          <div className="controls-row">
-            <button
-              onClick={() => dispatch({ type: 'STEP_BACKWARD' })}
-              disabled={state.currentStep <= 0}
-            >
-              &#9664;&#9664;
-            </button>
-            <button
-              onClick={() => dispatch({ type: state.isPlaying ? 'PAUSE' : 'PLAY' })}
-              disabled={!episode}
-            >
-              {state.isPlaying ? '\u23F8' : '\u25B6'}
-            </button>
-            <button
-              onClick={() => dispatch({ type: 'STEP_FORWARD' })}
-              disabled={state.currentStep >= maxStep}
-            >
-              &#9654;&#9654;
-            </button>
-          </div>
-          {episode && (
-            <input
-              type="range"
-              min={0}
-              max={maxStep}
-              value={state.currentStep}
-              onChange={(e) => dispatch({ type: 'SEEK', step: Number(e.target.value) })}
-              className="seek-slider"
-            />
+  // Space key toggles play/pause
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && e.target === document.body) {
+        e.preventDefault()
+        if (state.viewMode === 'inference') {
+          dispatch({ type: li.running ? 'LIVE_PAUSE' : 'LIVE_PLAY' })
+        } else {
+          dispatch({ type: state.isPlaying ? 'PAUSE' : 'PLAY' })
+        }
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [state.viewMode, state.isPlaying, li.running, dispatch])
+
+  // Fetch levels on mount
+  React.useEffect(() => {
+    api.fetchLevels().then((levels) => {
+      dispatch({ type: 'LOAD_LEVELS', levels })
+    })
+    api.fetchCheckpoints().then((checkpoints) => {
+      dispatch({ type: 'LOAD_CHECKPOINTS', checkpoints })
+    })
+  }, [dispatch])
+
+  const handleLevelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const id = e.target.value
+    if (!id) return
+    api.fetchLevel(id).then((data) => {
+      if (!data.level) {
+        console.error('Level not found:', id, data)
+        return
+      }
+      dispatch({ type: 'LOAD_LEVEL', level: data.level, episodes: data.episodes })
+    })
+  }
+
+  // Compute step info for bottom-right panel
+  const episode = state.episodes[state.currentEpisodeIndex]
+  const currentStepData = episode?.steps[state.currentStep]
+  const maxStep = episode ? Math.max(0, episode.steps.length - 1) : 0
+
+  const showRecordingInfo = state.viewMode === 'recordings' && currentStepData
+  const showInferenceInfo = state.viewMode === 'inference' && li.active && li.gameState
+
+  return (
+    <>
+      {/* Top overlay */}
+      <div className="overlay-top">
+        <div className="overlay-row">
+          <span className="title">Boxworld</span>
+          <select className="overlay-select" onChange={handleLevelChange} defaultValue="">
+            <option value="" disabled>
+              Select a level...
+            </option>
+            {state.levels.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.name}
+              </option>
+            ))}
+          </select>
+          {state.currentLevel && (
+            <>
+              <button
+                onClick={() => {
+                  dispatch({ type: 'TOGGLE_EDIT_MODE' })
+                  if (!state.editMode) {
+                    dispatch({ type: 'SET_VIEW_MODE', mode: 'inference' })
+                  }
+                }}
+              >
+                {state.editMode ? 'Exit Edit' : 'Edit Level'}
+              </button>
+              {state.editMode && (
+                <button onClick={() => dispatch({ type: 'RESET_LEVEL' })}>Reset</button>
+              )}
+            </>
           )}
-          <div className="controls-row">
-            <label>Speed</label>
-            <input
-              type="range"
-              min={1}
-              max={20}
-              value={state.playbackSpeed}
-              onChange={(e) => dispatch({ type: 'SET_SPEED', speed: Number(e.target.value) })}
+        </div>
+
+        {state.currentLevel && (
+          <>
+            <div className="tab-strip">
+              <button
+                className={`tab ${state.viewMode === 'recordings' ? 'tab-active' : ''}`}
+                onClick={() => dispatch({ type: 'SET_VIEW_MODE', mode: 'recordings' })}
+              >
+                Recordings
+              </button>
+              <button
+                className={`tab ${state.viewMode === 'inference' ? 'tab-active' : ''}`}
+                onClick={() => dispatch({ type: 'SET_VIEW_MODE', mode: 'inference' })}
+              >
+                Inference
+              </button>
+            </div>
+
+            {state.viewMode === 'recordings' && <RecordingsTab />}
+            {state.viewMode === 'inference' && (
+              <InferenceTab agentRef={agentRef} stepOnce={stepOnce} />
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Bottom-right overlay */}
+      <div className="overlay-bottom-right">
+        {showRecordingInfo && (
+          <>
+            <StepInfoPanel
+              stepLabel={`${state.currentStep} / ${maxStep}`}
+              action={ACTION_NAMES[currentStepData.action]}
+              reward={currentStepData.reward.toFixed(3)}
+              position={currentStepData.state.agentPosition}
+              hasKey={currentStepData.state.inventory.hasKey}
+              done={currentStepData.state.done}
             />
-            <span>{state.playbackSpeed} sps</span>
-          </div>
-        </div>
-      )}
+            {currentStepData.qValues && <QValuesPanel qValues={currentStepData.qValues} />}
+          </>
+        )}
+        {showInferenceInfo && (
+          <>
+            <StepInfoPanel
+              stepLabel={`${li.stepCount} / 200`}
+              action={li.lastAction !== null ? ACTION_NAMES[li.lastAction] : null}
+              reward={li.gameState!.reward.toFixed(3)}
+              position={li.gameState!.agentPosition}
+              hasKey={li.gameState!.inventory.hasKey}
+              done={li.gameState!.done}
+            />
+            {li.lastQValues && <QValuesPanel qValues={li.lastQValues} />}
+          </>
+        )}
+      </div>
+    </>
+  )
+}
 
-      {!li.active && currentStepData && (
-        <div className="sidebar-section">
-          <label>Step Info</label>
-          <div className="step-info">
-            <div>
-              Step: {state.currentStep} / {maxStep}
-            </div>
-            <div>Action: {ACTION_NAMES[currentStepData.action]}</div>
-            <div>Reward: {currentStepData.reward.toFixed(3)}</div>
-            <div>
-              Position: ({currentStepData.state.agentPosition[0]},{' '}
-              {currentStepData.state.agentPosition[1]})
-            </div>
-            <div>Has Key: {currentStepData.state.inventory.hasKey ? 'Yes' : 'No'}</div>
-            <div>Done: {currentStepData.state.done ? 'Yes' : 'No'}</div>
-          </div>
-        </div>
-      )}
+function Root() {
+  const [state] = util.useApp()
+  const level = state.currentLevel
+  const target: [number, number, number] | undefined = level
+    ? [(level.width - 1) / 2, 0, (level.height - 1) / 2]
+    : undefined
 
-      {!li.active && currentStepData?.qValues && <QValuesPanel qValues={currentStepData.qValues} />}
+  return (
+    <div style={{ width: '100vw', height: '100vh', position: 'relative' }}>
+      <render.Scene target={target}>
+        <GameView />
+      </render.Scene>
+      <Overlay />
     </div>
   )
 }
@@ -411,14 +522,7 @@ function Sidebar() {
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <util.AppProvider>
-      <div style={{ width: '100vw', height: '100vh', display: 'flex' }}>
-        <div style={{ flex: 1, position: 'relative' }}>
-          <render.Scene>
-            <GameView />
-          </render.Scene>
-        </div>
-        <Sidebar />
-      </div>
+      <Root />
     </util.AppProvider>
   </React.StrictMode>,
 )
