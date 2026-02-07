@@ -12,6 +12,7 @@ export interface LiveInferenceState {
   lastQValues: t.QValues | null
   stepCount: number
   history: t.Step[]
+  generation: number
 }
 
 const initialLiveInference: LiveInferenceState = {
@@ -23,7 +24,10 @@ const initialLiveInference: LiveInferenceState = {
   lastQValues: null,
   stepCount: 0,
   history: [],
+  generation: 0,
 }
+
+export type ViewMode = 'recordings' | 'inference'
 
 export interface AppState {
   levels: t.LevelInfo[]
@@ -38,6 +42,8 @@ export interface AppState {
   editMode: boolean
   inferenceLoading: boolean
   liveInference: LiveInferenceState
+  viewMode: ViewMode
+  editVersion: number
 }
 
 export type AppAction =
@@ -63,10 +69,13 @@ export type AppAction =
       qValues: t.QValues
       newState: t.GameState
       preStepGrid: t.CellType[][]
+      generation: number
     }
   | { type: 'LIVE_PLAY' }
   | { type: 'LIVE_PAUSE' }
   | { type: 'STOP_LIVE_INFERENCE' }
+  | { type: 'SET_VIEW_MODE'; mode: ViewMode }
+  | { type: 'RESTART_LIVE_INFERENCE' }
 
 const initialState: AppState = {
   levels: [],
@@ -81,6 +90,8 @@ const initialState: AppState = {
   editMode: false,
   inferenceLoading: false,
   liveInference: initialLiveInference,
+  viewMode: 'recordings',
+  editVersion: 0,
 }
 
 function getMaxStep(state: AppState): number {
@@ -112,6 +123,8 @@ function reducer(state: AppState, action: AppAction): AppState {
         isPlaying: false,
         editMode: false,
         liveInference: initialLiveInference,
+        viewMode: 'recordings',
+        editVersion: 0,
       }
 
     case 'SET_EPISODE':
@@ -162,6 +175,7 @@ function reducer(state: AppState, action: AppAction): AppState {
       return {
         ...state,
         currentLevel: { ...state.currentLevel, grid },
+        editVersion: state.editVersion + 1,
       }
     }
 
@@ -197,11 +211,8 @@ function reducer(state: AppState, action: AppAction): AppState {
       const gameState = play.createInitialState(state.currentLevel)
       return {
         ...state,
-        episodes: [],
-        currentEpisodeIndex: 0,
-        currentStep: 0,
-        isPlaying: false,
         editMode: false,
+        viewMode: 'inference',
         liveInference: {
           active: true,
           running: false,
@@ -211,6 +222,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           lastQValues: null,
           stepCount: 0,
           history: [],
+          generation: state.liveInference.generation + 1,
         },
       }
     }
@@ -218,6 +230,7 @@ function reducer(state: AppState, action: AppAction): AppState {
     case 'LIVE_STEP': {
       const li = state.liveInference
       if (!li.active || !li.gameState || !state.currentLevel) return state
+      if (action.generation !== li.generation) return state
       const prevPos: [number, number] = [
         li.gameState.agentPosition[0],
         li.gameState.agentPosition[1],
@@ -273,28 +286,39 @@ function reducer(state: AppState, action: AppAction): AppState {
         liveInference: { ...state.liveInference, running: false },
       }
 
-    case 'STOP_LIVE_INFERENCE': {
-      const li = state.liveInference
-      const episodes = [...state.episodes]
-      if (li.history.length > 0) {
-        const lastStep = li.history[li.history.length - 1]
-        const totalReward = lastStep.state.reward + lastStep.reward
-        const episode: t.Episode = {
-          id: `live-${Date.now()}`,
-          agentId: 'onnx-live',
-          levelId: state.currentLevel?.id ?? '',
-          steps: li.history,
-          totalReward,
-        }
-        episodes.push(episode)
-      }
+    case 'STOP_LIVE_INFERENCE':
       return {
         ...state,
-        episodes,
-        currentEpisodeIndex: episodes.length > 0 ? episodes.length - 1 : 0,
-        currentStep: 0,
-        isPlaying: false,
         liveInference: initialLiveInference,
+      }
+
+    case 'SET_VIEW_MODE': {
+      if (action.mode === 'recordings' && state.liveInference.active) {
+        return {
+          ...state,
+          viewMode: 'recordings',
+          liveInference: initialLiveInference,
+        }
+      }
+      return { ...state, viewMode: action.mode }
+    }
+
+    case 'RESTART_LIVE_INFERENCE': {
+      if (!state.currentLevel) return state
+      const freshState = play.createInitialState(state.currentLevel)
+      return {
+        ...state,
+        liveInference: {
+          ...state.liveInference,
+          running: true,
+          gameState: freshState,
+          prevAgentPosition: null,
+          lastAction: null,
+          lastQValues: null,
+          stepCount: 0,
+          history: [],
+          generation: state.liveInference.generation + 1,
+        },
       }
     }
 
@@ -322,6 +346,7 @@ export function usePlayback() {
   const [state, dispatch] = useApp()
 
   React.useEffect(() => {
+    if (state.viewMode !== 'recordings') return
     if (!state.isPlaying) return
 
     const episode = state.episodes[state.currentEpisodeIndex]
@@ -333,7 +358,14 @@ export function usePlayback() {
     }, intervalMs)
 
     return () => clearInterval(id)
-  }, [state.isPlaying, state.playbackSpeed, state.currentEpisodeIndex, state.episodes, dispatch])
+  }, [
+    state.viewMode,
+    state.isPlaying,
+    state.playbackSpeed,
+    state.currentEpisodeIndex,
+    state.episodes,
+    dispatch,
+  ])
 }
 
 export function useLiveInference() {
@@ -361,9 +393,10 @@ export function useLiveInference() {
         level: s.currentLevel,
       }
       const preStepGrid = s.currentLevel.grid
+      const gen = s.liveInference.generation
       const { action, qValues } = await agent.selectAction(merged)
       const newState = play.step(merged, action)
-      dispatch({ type: 'LIVE_STEP', action, qValues, newState, preStepGrid })
+      dispatch({ type: 'LIVE_STEP', action, qValues, newState, preStepGrid, generation: gen })
       if (newState.done || s.liveInference.stepCount + 1 >= 200) {
         dispatch({ type: 'LIVE_PAUSE' })
       }

@@ -338,26 +338,54 @@ const postProcessor = `
     // uv = (uv + triangle(floor_to_nearest(uv.y, band_size / 4.0)) * 6.28) * 3.0;
     uv = uv * 3.0;
     color = vec3(
-      scene(vec2(direction * t / period_secs, 0.0) + uv + voronoi_noise(t / 4.0 + uv *  10.0) * 0.02).x,
-      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv *  10.0) * 0.01).y,
-      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.01).z
+      scene(vec2(direction * t / period_secs, 0.0) + uv + voronoi_noise(t / 4.0 + uv *  10.0) * 0.008).x,
+      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv *  10.0) * 0.008).y,
+      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.005).z
     ) * 0.05;
   } else {
     color = vec3(
-      scene(uv + voronoi_noise(t / 4.0 + uv * 10.0) * 0.02).x,
-      scene(uv - voronoi_noise(t / 4.0 + uv * 10.0) * 0.01).y,
-      scene(uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.01).z
+      scene(uv + voronoi_noise(t / 4.0 + uv * 10.0) * 0.008).x,
+      scene(uv - voronoi_noise(t / 4.0 + uv * 10.0) * 0.004).y,
+      scene(uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.005).z
     );
   }
 `
 
-export function Scene({ children }: { children: React.ReactNode }) {
+function CameraController({ target }: { target: [number, number, number] }) {
+  const controlsRef = React.useRef<any>(null)
+  const { camera } = Fiber.useThree()
+  const initialized = React.useRef(false)
+
+  React.useEffect(() => {
+    if (!controlsRef.current) return
+    controlsRef.current.target.set(...target)
+    controlsRef.current.update()
+    if (!initialized.current) {
+      camera.position.set(target[0], 10, target[2] + 6)
+      initialized.current = true
+    }
+  }, [target[0], target[1], target[2], camera])
+
+  return <Drei.OrbitControls ref={controlsRef} />
+}
+
+export function Scene({
+  children,
+  target,
+}: {
+  children: React.ReactNode
+  target?: [number, number, number]
+}) {
+  const center = target ?? [4.5, 0, 4.5]
   return (
-    <Fiber.Canvas camera={{ position: [5, 10, 10], fov: 50 }} gl={{ preserveDrawingBuffer: true }}>
+    <Fiber.Canvas
+      camera={{ position: [center[0], 10, center[2] + 6], fov: 50 }}
+      gl={{ preserveDrawingBuffer: true }}
+    >
       <GLSLShader code={postProcessor}>
         <ambientLight intensity={0.6} />
         <directionalLight position={[10, 10, 5]} intensity={0.8} />
-        <Drei.OrbitControls />
+        <CameraController target={center} />
         {children}
       </GLSLShader>
     </Fiber.Canvas>

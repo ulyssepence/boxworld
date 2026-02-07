@@ -17,7 +17,7 @@ test.describe('Visual Tests', () => {
     await page.waitForLoadState('networkidle')
 
     // Select the first level
-    const select = page.locator('.sidebar select').first()
+    const select = page.locator('.overlay-top .overlay-select').first()
     await select.selectOption({ index: 1 }) // first non-placeholder option
 
     // Wait for level to render
