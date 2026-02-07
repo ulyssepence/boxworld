@@ -441,7 +441,7 @@ function Overlay() {
                 className={`tab ${state.viewMode === 'inference' ? 'tab-active' : ''}`}
                 onClick={() => dispatch({ type: 'SET_VIEW_MODE', mode: 'inference' })}
               >
-                Inference
+                Live
               </button>
             </div>
             <div className="overlay-divider" />

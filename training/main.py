@@ -69,9 +69,9 @@ def cmd_all(args):
     if not hasattr(args, "output_dir") or args.output_dir is None:
         args.output_dir = args.checkpoint_dir
 
-    # Use total training steps as min_steps so only the final checkpoint is recorded
+    # Record from all checkpoints (db.ts picks evenly spaced episodes at query time)
     if args.min_steps is None:
-        args.min_steps = args.steps
+        args.min_steps = 0
 
     # Clear database so we start fresh
     for suffix in ("", "-shm", "-wal"):
@@ -137,7 +137,7 @@ def main():
         "--min-steps",
         type=int,
         default=None,
-        help="Only record from checkpoints with at least this many training steps (default: total --steps)",
+        help="Only record from checkpoints with at least this many training steps (default: all)",
     )
     all_parser.set_defaults(func=cmd_all)
 

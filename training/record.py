@@ -226,23 +226,27 @@ class Recorder:
         self.initialize_db()
         self.clear_db()
 
-        # Discover checkpoint files
+        # Discover checkpoint files and extract training steps
         checkpoint_pattern = os.path.join(checkpoint_dir, "boxworld_*_steps.zip")
-        checkpoint_files = sorted(glob.glob(checkpoint_pattern))
+        all_checkpoints: list[tuple[int, str]] = []
+        for f in sorted(glob.glob(checkpoint_pattern)):
+            match = re.search(r"boxworld_(\d+)_steps\.zip", os.path.basename(f))
+            if match:
+                all_checkpoints.append((int(match.group(1)), f))
+        all_checkpoints.sort(key=lambda x: x[0])
 
-        if not checkpoint_files:
+        if not all_checkpoints:
             print(f"No checkpoints found in {checkpoint_dir}")
             return
 
-        # If min_steps not specified, find the highest checkpoint and only use that
-        if min_steps is None:
-            max_steps = 0
-            for f in checkpoint_files:
-                match = re.search(r"boxworld_(\d+)_steps\.zip", os.path.basename(f))
-                if match:
-                    max_steps = max(max_steps, int(match.group(1)))
-            min_steps = max_steps
-            print(f"Using only highest checkpoint: {min_steps} steps")
+        # Select which checkpoints to use
+        if min_steps is not None:
+            selected = [(s, f) for s, f in all_checkpoints if s >= min_steps]
+            print(f"Using {len(selected)} checkpoint(s) >= {min_steps} steps")
+        else:
+            max_steps = all_checkpoints[-1][0]
+            selected = [all_checkpoints[-1]]
+            print(f"Using only highest checkpoint: {max_steps} steps")
 
         # Discover level files
         from level_parser import load_level
@@ -259,17 +263,7 @@ class Recorder:
         for level_file in level_files:
             levels.append(load_level(level_file))
 
-        for checkpoint_file in checkpoint_files:
-            # Extract training steps from filename
-            basename = os.path.basename(checkpoint_file)
-            match = re.search(r"boxworld_(\d+)_steps\.zip", basename)
-            if not match:
-                continue
-            training_steps = int(match.group(1))
-
-            if training_steps < min_steps:
-                continue
-
+        for training_steps, checkpoint_file in selected:
             # Create env and load model
             env = BoxworldEnv()
             model = PPO.load(checkpoint_file, env=env)
