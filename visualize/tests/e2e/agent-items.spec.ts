@@ -1,14 +1,14 @@
 import { test, expect } from '@playwright/test'
 
 /**
- * Tests that key and door meshes visually update during inference episode playback.
+ * Tests that key and door meshes visually update during episode playback.
  *
- * Runs the agent on `door_key` level, then verifies:
+ * Uses recorded episodes from the DB for `door_key` level, then verifies:
  * 1. Gold key mesh is present before pickup, gone after
  * 2. Brown door mesh is present before toggle, gone after
  *
  * This catches the bug where play.step() grid changes aren't reflected
- * in the 3D scene during inference episode replay.
+ * in the 3D scene during episode replay.
  *
  * We verify by inspecting the React/Three.js state (grid data passed to
  * the Items component) rather than pixel colors, since the post-processing
@@ -16,8 +16,8 @@ import { test, expect } from '@playwright/test'
  */
 
 async function selectLevelAndWait(page: import('@playwright/test').Page, levelId: string) {
-  const sidebar = page.locator('.sidebar')
-  const levelSelect = sidebar.locator('select').first()
+  const overlay = page.locator('.overlay-top')
+  const levelSelect = overlay.locator('.overlay-select').first()
 
   await levelSelect.evaluate((el: HTMLSelectElement, val: string) => {
     el.value = val
@@ -27,7 +27,7 @@ async function selectLevelAndWait(page: import('@playwright/test').Page, levelId
   }, levelId)
 
   await page.waitForResponse((res) => res.url().includes(`/api/levels/${levelId}`))
-  await expect(sidebar.getByText('Playback')).toBeVisible({ timeout: 15000 })
+  await expect(page.getByText('Recordings')).toBeVisible({ timeout: 15000 })
 }
 
 async function waitForFrames(page: import('@playwright/test').Page) {
@@ -119,20 +119,16 @@ async function getDisplayGridItems(
 }
 
 test.describe('Inference episode: items update visually', () => {
-  test('key disappears and door opens during inference playback', async ({ page }) => {
+  test('key disappears and door opens during episode playback', async ({ page }) => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
     await selectLevelAndWait(page, 'door_key')
 
-    // Run live ONNX inference
-    const runBtn = page.getByRole('button', { name: 'Run Agent' })
-    await expect(runBtn).toBeVisible({ timeout: 10000 })
-    await runBtn.click()
-    await expect(page.getByText('Running...')).toBeHidden({ timeout: 60000 })
-
-    // Wait for render to settle
-    await page.waitForTimeout(1000)
+    // Wait for step info to appear (recorded episodes)
+    const stepInfo = page.locator('.step-info div').filter({ hasText: /^Step:/ })
+    await expect(stepInfo).toBeVisible({ timeout: 5000 })
+    await page.waitForTimeout(500)
     await waitForFrames(page)
 
     // Find which steps have Pickup and Toggle actions by reading step info
@@ -169,7 +165,7 @@ test.describe('Inference episode: items update visually', () => {
     const afterPickup = await getDisplayGridItems(page)
     expect(afterPickup.keys.length, 'Key should be removed from grid after Pickup').toBe(0)
 
-    // Also verify sidebar shows Has Key changed
+    // Also verify step info shows Has Key changed
     const hasKeyBefore = await page
       .locator('.step-info div')
       .filter({ hasText: /^Has Key:/ })

@@ -13,71 +13,133 @@ html, body, #root {
     overflow: hidden;
 }
 
-.sidebar {
-    width: 280px;
-    min-width: 280px;
-    background: #1a1a2e;
-    border-left: 1px solid #333;
-    padding: 16px;
-    overflow-y: auto;
+/* Floating control panel */
+.overlay-top {
+    position: absolute;
+    top: 15vh;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(33vw, 420px);
+    background: rgba(10, 10, 30, 0.85);
+    backdrop-filter: blur(8px);
+    border-radius: 8px;
+    padding: 12px 16px;
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
+    z-index: 10;
+    pointer-events: auto;
 }
 
-.sidebar h2 {
-    font-size: 18px;
-    color: #00FFFF;
-    margin-bottom: 4px;
-}
-
-.sidebar-section {
+/* Bottom-right floating panels */
+.overlay-bottom-right {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
     display: flex;
     flex-direction: column;
-    gap: 6px;
+    gap: 8px;
+    z-index: 10;
+    pointer-events: auto;
 }
 
-.sidebar-section > label {
+.overlay-panel {
+    background: rgba(10, 10, 30, 0.85);
+    backdrop-filter: blur(8px);
+    border-radius: 6px;
+    padding: 10px 14px;
+    min-width: 180px;
+}
+
+.panel-label {
     font-size: 11px;
     text-transform: uppercase;
     letter-spacing: 0.05em;
     color: #888;
+    margin-bottom: 4px;
 }
 
-.sidebar select {
+/* Horizontal row of controls */
+.overlay-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.overlay-row label {
+    font-size: 12px;
+    color: #888;
+    min-width: 40px;
+    white-space: nowrap;
+}
+
+.overlay-row span {
+    font-size: 12px;
+    color: #aaa;
+    min-width: 50px;
+}
+
+/* Title text */
+.title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #00FFFF;
+    min-width: auto !important;
+}
+
+/* Tab strip */
+.tab-strip {
+    display: flex;
+    gap: 0;
+    justify-content: center;
+}
+
+.tab {
+    background: transparent;
+    color: #888;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 6px 16px;
+    font-size: 13px;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.tab:hover {
+    color: #e0e0e0;
+}
+
+.tab-active {
+    color: #00FFFF;
+    border-bottom-color: #00FFFF;
+}
+
+/* Tab content area */
+.tab-content {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+/* Select elements */
+.overlay-select {
     background: #0f0f23;
     color: #e0e0e0;
     border: 1px solid #444;
     border-radius: 4px;
     padding: 6px 8px;
     font-size: 13px;
-    width: 100%;
 }
 
-.sidebar select:focus {
+.overlay-select:focus {
     outline: none;
     border-color: #00FFFF;
 }
 
-.controls-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-}
-
-.controls-row label {
-    font-size: 12px;
-    color: #888;
-    min-width: 40px;
-}
-
-.controls-row span {
-    font-size: 12px;
-    color: #aaa;
-    min-width: 50px;
-}
-
-.sidebar button {
+/* Buttons */
+button {
     background: #0f0f23;
     color: #e0e0e0;
     border: 1px solid #444;
@@ -88,26 +150,30 @@ html, body, #root {
     transition: background 0.15s;
 }
 
-.sidebar button:hover:not(:disabled) {
+button:hover:not(:disabled):not(.tab) {
     background: #1a1a3e;
     border-color: #00FFFF;
 }
 
-.sidebar button:disabled {
+button:disabled:not(.tab) {
     opacity: 0.4;
     cursor: not-allowed;
 }
 
+/* Sliders */
 .seek-slider {
-    width: 100%;
-    accent-color: #00FFFF;
-}
-
-.controls-row input[type="range"] {
     flex: 1;
     accent-color: #00FFFF;
+    min-width: 80px;
 }
 
+.overlay-row input[type="range"] {
+    flex: 1;
+    accent-color: #00FFFF;
+    min-width: 60px;
+}
+
+/* Step info block */
 .step-info {
     font-size: 12px;
     line-height: 1.6;
@@ -119,4 +185,27 @@ html, body, #root {
 
 .step-info div {
     font-family: monospace;
+}
+
+/* Speed buttons */
+.speed-btn {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    font-size: 14px;
+    line-height: 1;
+    min-width: 24px;
+}
+
+.speed-label {
+    font-size: 11px;
+    color: #aaa;
+    min-width: 24px !important;
+    text-align: center;
+}
+
+/* Edit hint text */
+.edit-hint {
+    font-size: 11px;
+    color: #888;
 }
