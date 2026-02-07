@@ -454,6 +454,61 @@ def test_grid_reflects_key_pickup(recorder):
     assert last_step_val == 0, f"Final step should show FLOOR(0) at grid[2][2], got {last_step_val}"
 
 
+def test_multiple_runs_have_different_rewards(recorder):
+    """Bug repro: all runs on same level produce identical rewards because
+    the env state is reset identically and the policy is deterministic argmax.
+
+    With epsilon-greedy recording (runs 2+), we expect at least 2 distinct rewards
+    out of 5 runs."""
+    env, grid = _make_corridor_env()
+    # Use a model that always goes RIGHT — deterministic argmax reaches goal every time
+    # with identical reward. Epsilon-greedy should cause divergent trajectories.
+    model = _FakeModel(action=BoxworldEnv.RIGHT)
+    agent_id = recorder.register_agent("fake_multi", 0)
+
+    level_data = {
+        "id": "corridor",
+        "name": "Corridor",
+        "width": 5,
+        "height": 5,
+        "grid": grid,
+        "agentStart": [1, 1],
+    }
+
+    rewards = []
+    for run in range(5):
+        # Reset env to the same initial state each time (mimics record_all behavior)
+        env._grid = [list(row) for row in grid]
+        env._agent_pos = [1, 1]
+        env._has_key = False
+        env._steps = 0
+        env._last_direction = BoxworldEnv.UP
+
+        # Run 1 is deterministic (epsilon=0), runs 2+ have epsilon=0.1
+        epsilon = 0.0 if run == 0 else 0.1
+        episode_id = recorder.record_episode(
+            model=model,
+            env=env,
+            level_id="corridor",
+            level_data=level_data,
+            agent_id=agent_id,
+            run_number=run + 1,
+            epsilon=epsilon,
+            seed=run,
+        )
+
+        cursor = recorder.conn.execute(
+            "SELECT total_reward FROM episodes WHERE id = ?", (episode_id,)
+        )
+        rewards.append(cursor.fetchone()[0])
+
+    distinct_rewards = len(set(rewards))
+    assert distinct_rewards >= 2, (
+        f"Expected at least 2 distinct rewards from 5 runs with epsilon-greedy, "
+        f"but got {distinct_rewards}: {rewards}"
+    )
+
+
 def test_first_step_matches_agent_start(recorder):
     """step_number=1's agentPosition must match agentStart from level_data."""
     env, grid = _make_corridor_env()
