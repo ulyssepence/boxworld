@@ -8,6 +8,18 @@ import * as play from './play'
 import * as shader from './shader'
 import * as t from './types'
 
+// Drag detection: suppress clicks that follow a drag (orbit/pan)
+let pointerDownPos = { x: 0, y: 0 }
+const DRAG_THRESHOLD = 5
+function onPointerDown(e: React.PointerEvent) {
+  pointerDownPos = { x: e.clientX, y: e.clientY }
+}
+function wasDrag(e: { clientX: number; clientY: number }): boolean {
+  const dx = e.clientX - pointerDownPos.x
+  const dy = e.clientY - pointerDownPos.y
+  return dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD
+}
+
 const WallMaterial = (
   <material.CustomMaterial
     vertexShader={`
@@ -130,7 +142,7 @@ export function Grid({
             onCellClick
               ? (e) => {
                   e.stopPropagation()
-                  onCellClick(tile.x, tile.y)
+                  if (!wasDrag(e.nativeEvent)) onCellClick(tile.x, tile.y)
                 }
               : undefined
           }
@@ -164,7 +176,7 @@ export function Walls({
             onCellClick
               ? (e) => {
                   e.stopPropagation()
-                  onCellClick(x, y)
+                  if (!wasDrag(e.nativeEvent)) onCellClick(x, y)
                 }
               : undefined
           }
@@ -238,8 +250,9 @@ export function Items({
 
   const clickHandler = (x: number, y: number) =>
     onCellClick
-      ? (e: { stopPropagation: () => void }) => {
+      ? (e: { stopPropagation: () => void; nativeEvent?: MouseEvent }) => {
           e.stopPropagation()
+          if (e.nativeEvent && wasDrag(e.nativeEvent)) return
           onCellClick(x, y)
         }
       : undefined
@@ -296,6 +309,24 @@ export function Items({
               >
                 <planeGeometry args={[0.95, 0.95]} />
                 {LavaMaterial}
+                <particles.Particles
+                  count={8}
+                  origin={[0, 0, 0]}
+                  velocity={[0, 0.03, 0]}
+                  velocitySpread={[3, 3, 2]}
+                  gravity={[0, -1, 0]}
+                  lifetime={[0.2, 0.4]}
+                  size={[0.03, 0.1]}
+                  color={COLORS.lava}
+                  opacity={[1, 1]}
+                  blending={THREE.AdditiveBlending}
+                  fragmentShader={`
+                      color *= 1.0 + 0.5 * sin(t * 10.0 + seed * 6.28);
+                      float d = length(uv - vec2(0.5)) * one_minus(age);
+                      alpha *= smoothstep(0.5, 0.2, d);
+                    `}
+                  seed={item.x * 100 + item.y}
+                />
               </mesh>
             )
           default:
@@ -368,23 +399,6 @@ export function Agent({
   return (
     <group ref={groupRef} position={[position[0], 0, position[1]]}>
       <primitive object={clonedScene} />
-      <particles.Particles
-        count={300}
-        origin={[0, 1, 0]}
-        velocity={[0, 3, 0]}
-        velocitySpread={[2, 1, 2]}
-        gravity={[0, -6, 0]}
-        lifetime={[0.5, 2.0]}
-        size={[0.03, 0.1]}
-        color="#330033"
-        opacity={[1, 1]}
-        blending={THREE.AdditiveBlending}
-        fragmentShader={`
-            color *= 1.0 + 0.5 * sin(t * 10.0 + seed * 6.28);
-            float d = length(uv - vec2(0.5)) * one_minus(age);
-            alpha *= smoothstep(0.5, 0.2, d);
-          `}
-      />
     </group>
   )
 }
@@ -485,6 +499,7 @@ export function Scene({
     <Fiber.Canvas
       camera={{ position: [center[0], 13, center[2] + 7.8], fov: 50 }}
       gl={{ preserveDrawingBuffer: true }}
+      onPointerDown={onPointerDown}
     >
       <shader.GLSLShader code={postProcessor}>
         <ambientLight intensity={0.6} />
