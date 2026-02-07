@@ -217,7 +217,10 @@ export function Items({
   )
 }
 
-/** Agent sphere with lerp animation between positions */
+/** Agent model with linear lerp animation and facing direction */
+// Rotation offset if the model's "forward" doesn't align with -Z
+const AGENT_ROTATION_OFFSET = 0
+
 export function Agent({
   position,
   prevPosition,
@@ -225,37 +228,44 @@ export function Agent({
   position: [number, number]
   prevPosition?: [number, number]
 }) {
-  const meshRef = React.useRef<THREE.Mesh>(null!)
-  const startPos = React.useRef<THREE.Vector3>(new THREE.Vector3(position[0], 0.4, position[1]))
-  const targetPos = React.useRef<THREE.Vector3>(new THREE.Vector3(position[0], 0.4, position[1]))
+  const groupRef = React.useRef<THREE.Group>(null!)
+  const { scene } = Drei.useGLTF('/static/models/player.glb')
+  const clonedScene = React.useMemo(() => scene.clone(), [scene])
+  const startPos = React.useRef<THREE.Vector3>(new THREE.Vector3(position[0], 0, position[1]))
+  const targetPos = React.useRef<THREE.Vector3>(new THREE.Vector3(position[0], 0, position[1]))
   const progress = React.useRef(1)
+  const facingAngle = React.useRef(0)
 
   React.useEffect(() => {
     if (prevPosition) {
-      startPos.current.set(prevPosition[0], 0.4, prevPosition[1])
+      startPos.current.set(prevPosition[0], 0, prevPosition[1])
     } else {
       startPos.current.copy(targetPos.current)
     }
-    targetPos.current.set(position[0], 0.4, position[1])
+    targetPos.current.set(position[0], 0, position[1])
     progress.current = 0
+
+    // Compute facing direction from movement delta
+    const dx = targetPos.current.x - startPos.current.x
+    const dz = targetPos.current.z - startPos.current.z
+    if (dx !== 0 || dz !== 0) {
+      facingAngle.current = Math.atan2(dx, dz) + AGENT_ROTATION_OFFSET
+    }
   }, [position, prevPosition])
 
   Fiber.useFrame((_, delta) => {
-    if (!meshRef.current) return
+    if (!groupRef.current) return
     if (progress.current < 1) {
       progress.current = Math.min(1, progress.current + delta * 8)
-      const t = progress.current
-      // Smooth step interpolation
-      const smooth = t * t * (3 - 2 * t)
-      meshRef.current.position.lerpVectors(startPos.current, targetPos.current, smooth)
+      groupRef.current.position.lerpVectors(startPos.current, targetPos.current, progress.current)
     }
+    groupRef.current.rotation.y = facingAngle.current
   })
 
   return (
-    <mesh ref={meshRef} position={[position[0], 0.4, position[1]]}>
-      <sphereGeometry args={[0.3, 16, 16]} />
-      <meshStandardMaterial color={COLORS.agent} emissive={COLORS.agent} emissiveIntensity={0.3} />
-    </mesh>
+    <group ref={groupRef} position={[position[0], 0, position[1]]}>
+      <primitive object={clonedScene} />
+    </group>
   )
 }
 
