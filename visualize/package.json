@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "cp node_modules/onnxruntime-web/dist/ort.min.js static/ && cp node_modules/onnxruntime-web/dist/*.wasm static/ && cp node_modules/onnxruntime-web/dist/*.mjs static/ && esbuild src/client.tsx --bundle --minify --outfile=static/client.js",
+    "start": "bun run src/server.ts",
     "dev": "bun run src/server.ts",
     "watch": "nodemon --watch src --ext '*' --exec 'npm run build && npm run dev'",
     "format": "prettier --write 'src/**/*.{ts,tsx}'",
