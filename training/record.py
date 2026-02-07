@@ -202,13 +202,11 @@ class Recorder:
         return episode_id
 
     def clear_db(self) -> None:
-        """Delete all data from every table so we start fresh."""
+        """Delete recording data (steps + episodes) but preserve checkpoints and agents."""
         self.conn.executescript(
             """
             DELETE FROM steps;
             DELETE FROM episodes;
-            DELETE FROM checkpoints;
-            DELETE FROM agents;
             """
         )
 
@@ -275,18 +273,31 @@ class Recorder:
             env = BoxworldEnv()
             model = PPO.load(checkpoint_file, env=env)
 
-            # Register agent
-            agent_name = f"ppo_{training_steps}"
-            agent_id = self.register_agent(agent_name, training_steps)
-
-            # Register checkpoint
-            checkpoint_id = uuid.uuid4().hex
-            self.conn.execute(
-                "INSERT INTO checkpoints (id, agent_id, training_steps, onnx_path) "
-                "VALUES (?, ?, ?, ?)",
-                (checkpoint_id, agent_id, training_steps, None),
+            # Reuse existing agent (from exporter) or create a new one
+            cursor = self.conn.execute(
+                "SELECT id FROM agents WHERE training_steps = ?",
+                (training_steps,),
             )
-            self.conn.commit()
+            row = cursor.fetchone()
+            if row:
+                agent_id = row[0]
+            else:
+                agent_name = f"ppo_{training_steps}"
+                agent_id = self.register_agent(agent_name, training_steps)
+
+            # Register checkpoint only if not already present (exporter may have done it)
+            cursor = self.conn.execute(
+                "SELECT id FROM checkpoints WHERE training_steps = ?",
+                (training_steps,),
+            )
+            if not cursor.fetchone():
+                checkpoint_id = uuid.uuid4().hex
+                self.conn.execute(
+                    "INSERT INTO checkpoints (id, agent_id, training_steps, onnx_path) "
+                    "VALUES (?, ?, ?, ?)",
+                    (checkpoint_id, agent_id, training_steps, None),
+                )
+                self.conn.commit()
 
             for level_data in levels:
                 level_id = level_data["id"]
