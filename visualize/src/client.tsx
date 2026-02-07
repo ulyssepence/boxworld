@@ -212,55 +212,47 @@ function RecordingsTab() {
   return (
     <div className="tab-content">
       {state.episodes.length > 0 && (
-        <div className="overlay-row">
-          <label>Episode</label>
-          <select
-            className="overlay-select"
-            value={state.currentEpisodeIndex}
-            onChange={(e) => dispatch({ type: 'SET_EPISODE', index: Number(e.target.value) })}
-          >
-            {state.episodes.map((ep, i) => (
-              <option key={ep.id} value={i}>
-                {ep.trainingSteps != null
-                  ? `${ep.trainingSteps.toLocaleString()} steps`
-                  : `Episode ${i + 1}`}{' '}
-                (reward: {ep.totalReward.toFixed(2)})
-              </option>
-            ))}
-          </select>
-        </div>
+        <select
+          className="overlay-select"
+          value={state.currentEpisodeIndex}
+          onChange={(e) => dispatch({ type: 'SET_EPISODE', index: Number(e.target.value) })}
+        >
+          {state.episodes.map((ep, i) => (
+            <option key={ep.id} value={i}>
+              {ep.trainingSteps != null
+                ? `${ep.trainingSteps.toLocaleString()} steps`
+                : `Episode ${i + 1}`}{' '}
+              (reward: {ep.totalReward.toFixed(2)})
+            </option>
+          ))}
+        </select>
       )}
-      <div className="overlay-row">
-        <button
-          onClick={() => dispatch({ type: 'STEP_BACKWARD' })}
-          disabled={state.currentStep <= 0}
-        >
-          &#9664;&#9664;
-        </button>
-        <button
-          onClick={() => dispatch({ type: state.isPlaying ? 'PAUSE' : 'PLAY' })}
-          disabled={!episode}
-        >
-          {state.isPlaying ? '\u23F8' : '\u25B6'}
-        </button>
-        <button
-          onClick={() => dispatch({ type: 'STEP_FORWARD' })}
-          disabled={state.currentStep >= maxStep}
-        >
-          &#9654;&#9654;
-        </button>
-        {episode && (
-          <input
-            type="range"
-            min={0}
-            max={maxStep}
-            value={state.currentStep}
-            onChange={(e) => dispatch({ type: 'SEEK', step: Number(e.target.value) })}
-            className="seek-slider"
-          />
-        )}
-        <SpeedControls />
-      </div>
+      <button onClick={() => dispatch({ type: 'STEP_BACKWARD' })} disabled={state.currentStep <= 0}>
+        &#9664;&#9664;
+      </button>
+      <button
+        onClick={() => dispatch({ type: state.isPlaying ? 'PAUSE' : 'PLAY' })}
+        disabled={!episode}
+      >
+        {state.isPlaying ? '\u23F8' : '\u25B6'}
+      </button>
+      <button
+        onClick={() => dispatch({ type: 'STEP_FORWARD' })}
+        disabled={state.currentStep >= maxStep}
+      >
+        &#9654;&#9654;
+      </button>
+      {episode && (
+        <input
+          type="range"
+          min={0}
+          max={maxStep}
+          value={state.currentStep}
+          onChange={(e) => dispatch({ type: 'SEEK', step: Number(e.target.value) })}
+          className="seek-slider"
+        />
+      )}
+      <SpeedControls />
     </div>
   )
 }
@@ -294,8 +286,7 @@ function InferenceTab({
   return (
     <div className="tab-content">
       {state.checkpoints.length > 0 && (
-        <div className="overlay-row">
-          <label>Checkpoint</label>
+        <>
           <select
             className="overlay-select"
             value={selectedCheckpointId}
@@ -317,7 +308,7 @@ function InferenceTab({
                 startLiveAgent(url, agentRef, dispatch)
               }}
             >
-              {state.inferenceLoading ? 'Loading...' : 'Run Agent'}
+              {state.inferenceLoading ? 'Loading...' : 'Run'}
             </button>
           ) : (
             <button
@@ -332,10 +323,10 @@ function InferenceTab({
               Restart
             </button>
           )}
-        </div>
+        </>
       )}
       {li.active && (
-        <div className="overlay-row">
+        <>
           <button
             onClick={() => dispatch({ type: li.running ? 'LIVE_PAUSE' : 'LIVE_PLAY' })}
             disabled={!!li.gameState?.done || li.stepCount >= 200}
@@ -350,9 +341,8 @@ function InferenceTab({
           </button>
           <button onClick={() => dispatch({ type: 'STOP_LIVE_INFERENCE' })}>Stop</button>
           <SpeedControls />
-        </div>
+        </>
       )}
-      <div className="edit-hint">Click tiles to edit the level. Agent auto-restarts on edits.</div>
     </div>
   )
 }
@@ -411,41 +401,35 @@ function Overlay() {
 
   return (
     <>
-      {/* Top overlay */}
+      {/* Top overlay — single horizontal bar */}
       <div className="overlay-top">
-        <div className="overlay-row">
-          <span className="title">Boxworld</span>
-          <select className="overlay-select" onChange={handleLevelChange} defaultValue="">
-            <option value="" disabled>
-              Select a level...
+        <span className="title">Boxworld</span>
+        <select className="overlay-select" onChange={handleLevelChange} defaultValue="">
+          <option value="" disabled>
+            Select a level...
+          </option>
+          {state.levels.map((l) => (
+            <option key={l.id} value={l.id}>
+              {l.name}
             </option>
-            {state.levels.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.name}
-              </option>
-            ))}
-          </select>
-          {state.currentLevel && (
-            <>
-              <button
-                onClick={() => {
-                  dispatch({ type: 'TOGGLE_EDIT_MODE' })
-                  if (!state.editMode) {
-                    dispatch({ type: 'SET_VIEW_MODE', mode: 'inference' })
-                  }
-                }}
-              >
-                {state.editMode ? 'Exit Edit' : 'Edit Level'}
-              </button>
-              {state.editMode && (
-                <button onClick={() => dispatch({ type: 'RESET_LEVEL' })}>Reset</button>
-              )}
-            </>
-          )}
-        </div>
-
+          ))}
+        </select>
         {state.currentLevel && (
           <>
+            <button
+              onClick={() => {
+                dispatch({ type: 'TOGGLE_EDIT_MODE' })
+                if (!state.editMode) {
+                  dispatch({ type: 'SET_VIEW_MODE', mode: 'inference' })
+                }
+              }}
+            >
+              {state.editMode ? 'Exit Edit' : 'Edit Level'}
+            </button>
+            {state.editMode && (
+              <button onClick={() => dispatch({ type: 'RESET_LEVEL' })}>Reset</button>
+            )}
+            <div className="overlay-divider" />
             <div className="tab-strip">
               <button
                 className={`tab ${state.viewMode === 'recordings' ? 'tab-active' : ''}`}
@@ -460,7 +444,7 @@ function Overlay() {
                 Inference
               </button>
             </div>
-
+            <div className="overlay-divider" />
             {state.viewMode === 'recordings' && <RecordingsTab />}
             {state.viewMode === 'inference' && (
               <InferenceTab agentRef={agentRef} stepOnce={stepOnce} />
