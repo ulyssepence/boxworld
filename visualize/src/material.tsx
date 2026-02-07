@@ -219,6 +219,21 @@ export function CustomMaterial({
   )
 }
 
+/** Apply materials to meshes in a scene by index order.
+ *  Traverses the scene, collects all Mesh children, and assigns materials[i]
+ *  to the i-th mesh. If fewer materials than meshes, the last material is
+ *  reused for remaining meshes. */
+export function applyMaterials(scene: THREE.Object3D, materials: THREE.Material[]): void {
+  if (materials.length === 0) return
+  let i = 0
+  scene.traverse((child) => {
+    if (child instanceof THREE.Mesh) {
+      child.material = materials[Math.min(i, materials.length - 1)]
+      i++
+    }
+  })
+}
+
 /** Create a THREE.ShaderMaterial imperatively (for applying to GLB meshes).
  *  Returns a stable material + a useFrame hook that updates time uniforms. */
 export function useCustomMaterial(props: CustomMaterialProps = {}): THREE.ShaderMaterial {
