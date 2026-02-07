@@ -62,6 +62,7 @@ export interface Episode {
   levelId: string
   steps: Step[]
   totalReward: number
+  trainingSteps?: number
 }
 
 /** API response types */
