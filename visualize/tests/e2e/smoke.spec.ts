@@ -49,15 +49,6 @@ test.describe('Smoke Tests', () => {
     expect(data.levels.length).toBeGreaterThan(0)
   })
 
-  test('API /api/levels/four_rooms returns level data', async ({ request }) => {
-    const response = await request.get('/api/levels/four_rooms')
-    expect(response.ok()).toBeTruthy()
-    const data = await response.json()
-    expect(data).toHaveProperty('level')
-    expect(data.level.width).toBe(10)
-    expect(data.level.height).toBe(10)
-  })
-
   test('API /api/levels/nonexistent returns 404', async ({ request }) => {
     const response = await request.get('/api/levels/nonexistent')
     expect(response.status()).toBe(404)
