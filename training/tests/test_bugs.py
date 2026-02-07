@@ -3,7 +3,7 @@
 Bug 1: "Run Agent" in browser produces a stationary agent.
 Bug 2: Recorded episode playback shows a stationary agent for most episodes.
 
-Hypothesis: DQN model trained on random procedural levels picks a blocked action
+Hypothesis: model trained on random procedural levels picks a blocked action
 on the hand-designed levels — agent never moves, observations never change,
 so it picks the same blocked action forever.
 """
@@ -57,7 +57,7 @@ def _make_env_from_level(level_data: dict) -> BoxworldEnv:
 @pytest.mark.skipif(not HAS_ONNX, reason="No ONNX checkpoint at data/checkpoints/")
 def test_onnx_produces_different_qvalues_for_different_states():
     """Load the 500k-step ONNX model, construct obs at two different positions,
-    run inference, and assert Q-values differ. Confirms the inference pipeline works."""
+    run inference, and assert output values differ. Confirms the inference pipeline works."""
     import onnxruntime as ort
 
     session = ort.InferenceSession(str(ONNX_500K))
@@ -77,11 +77,11 @@ def test_onnx_produces_different_qvalues_for_different_states():
     q_a = session.run(None, {"obs": obs_a.reshape(1, -1)})[0][0]
     q_b = session.run(None, {"obs": obs_b.reshape(1, -1)})[0][0]
 
-    # Q-values should differ for different observations
+    # Output values should differ for different observations
     assert not np.allclose(q_a, q_b, atol=1e-6), (
-        f"ONNX returns identical Q-values for different states:\n"
-        f"  state A q-values: {q_a}\n"
-        f"  state B q-values: {q_b}"
+        f"ONNX returns identical values for different states:\n"
+        f"  state A values: {q_a}\n"
+        f"  state B values: {q_b}"
     )
 
 
@@ -138,7 +138,7 @@ def test_onnx_inference_moves_agent_on_real_level():
         f"  Start position: {positions[0]}\n"
         f"  Actions taken (counts): {action_counts}\n"
         f"  Unique actions: {[action_names[a] for a in unique_actions]}\n"
-        f"  Q-values at initial state: {dict(zip(action_names.values(), q_values.tolist()))}"
+        f"  Values at initial state: {dict(zip(action_names.values(), q_values.tolist()))}"
     )
 
 
@@ -153,12 +153,17 @@ def test_recorded_episode_agent_moves_on_real_levels():
     Recorder.record_episode(), parse state_json, assert agentPosition changes.
     This is the core Bug 2 reproduction.
     """
-    from stable_baselines3 import DQN
+    from stable_baselines3 import PPO
 
     from record import Recorder
 
     env = BoxworldEnv()
-    model = DQN.load(str(ZIP_500K), env=env)
+    try:
+        model = PPO.load(str(ZIP_500K), env=env)
+    except (TypeError, ValueError):
+        pytest.skip(
+            "Checkpoint incompatible with current env (different algorithm or observation space), retrain needed"
+        )
 
     level_files = sorted(LEVELS_DIR.glob("*.json"))
     assert len(level_files) > 0, "No level files found"

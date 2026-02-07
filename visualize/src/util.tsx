@@ -53,6 +53,7 @@ function getMaxStep(state: AppState): number {
 }
 
 function reducer(state: AppState, action: AppAction): AppState {
+  console.log(action, state)
   switch (action.type) {
     case 'LOAD_LEVELS':
       return { ...state, levels: action.levels }

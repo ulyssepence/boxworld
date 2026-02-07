@@ -1,4 +1,4 @@
-"""Tests for ONNX export of SB3 DQN checkpoints."""
+"""Tests for ONNX export of SB3 PPO checkpoints."""
 
 import os
 import shutil
@@ -7,7 +7,7 @@ import numpy as np
 import onnxruntime as ort
 import pytest
 import torch
-from stable_baselines3 import DQN
+from stable_baselines3 import PPO
 
 from environment import BoxworldEnv
 from export import Exporter
@@ -15,11 +15,11 @@ from export import Exporter
 
 @pytest.fixture
 def trained_model(tmp_path):
-    """Create a minimal DQN model, train briefly, and save a checkpoint."""
+    """Create a minimal PPO model, train briefly, and save a checkpoint."""
     env = BoxworldEnv()
-    model = DQN("MlpPolicy", env, learning_starts=10, verbose=0)
-    model.learn(total_timesteps=50)
-    checkpoint_path = str(tmp_path / "boxworld_50_steps")
+    model = PPO("MlpPolicy", env, n_steps=64, verbose=0)
+    model.learn(total_timesteps=64)
+    checkpoint_path = str(tmp_path / "boxworld_64_steps")
     model.save(checkpoint_path)
     # SB3 appends .zip automatically
     return model, checkpoint_path + ".zip", env
@@ -29,7 +29,7 @@ def trained_model(tmp_path):
 def exported_onnx(tmp_path, trained_model):
     """Export the trained model to ONNX and return both paths."""
     model, checkpoint_path, env = trained_model
-    onnx_path = str(tmp_path / "boxworld_50_steps.onnx")
+    onnx_path = str(tmp_path / "boxworld_64_steps.onnx")
     exporter = Exporter()
     exporter.export_checkpoint(checkpoint_path, onnx_path)
     exporter.close()
@@ -97,8 +97,8 @@ def test_onnx_loads_from_isolated_directory(exported_onnx, tmp_path):
 def test_export_all_checkpoints(tmp_path):
     """Given 3 checkpoints in a directory, export_all produces 3 ONNX files."""
     env = BoxworldEnv()
-    model = DQN("MlpPolicy", env, learning_starts=10, verbose=0)
-    model.learn(total_timesteps=50)
+    model = PPO("MlpPolicy", env, n_steps=64, verbose=0)
+    model.learn(total_timesteps=64)
 
     checkpoint_dir = str(tmp_path / "checkpoints")
     output_dir = str(tmp_path / "onnx_output")

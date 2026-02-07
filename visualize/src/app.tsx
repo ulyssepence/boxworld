@@ -135,6 +135,10 @@ function Sidebar() {
     const id = e.target.value
     if (!id) return
     api.fetchLevel(id).then((data) => {
+      if (!data.level) {
+        console.error('Level not found:', id, data)
+        return
+      }
       dispatch({ type: 'LOAD_LEVEL', level: data.level, episodes: data.episodes })
     })
   }

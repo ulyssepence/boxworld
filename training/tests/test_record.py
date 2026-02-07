@@ -6,7 +6,7 @@ import sqlite3
 
 import pytest
 import torch
-from stable_baselines3 import DQN
+from stable_baselines3 import PPO
 
 from environment import BoxworldEnv
 from record import Recorder
@@ -27,10 +27,10 @@ def recorder(db_path):
 
 @pytest.fixture
 def trained_model():
-    """Create a DQN model with minimal training for testing."""
+    """Create a PPO model with minimal training for testing."""
     env = BoxworldEnv()
-    model = DQN("MlpPolicy", env, learning_starts=10, verbose=0)
-    model.learn(total_timesteps=50)
+    model = PPO("MlpPolicy", env, n_steps=64, verbose=0)
+    model.learn(total_timesteps=64)
     return model, env
 
 
@@ -60,7 +60,7 @@ def test_register_agent(recorder):
 
 def test_record_single_episode(recorder, trained_model):
     model, env = trained_model
-    agent_id = recorder.register_agent("test_agent", 50)
+    agent_id = recorder.register_agent("test_agent", 64)
 
     level_data = {
         "id": "test_level",
@@ -95,7 +95,7 @@ def test_record_single_episode(recorder, trained_model):
 
 def test_step_data_is_valid_json(recorder, trained_model):
     model, env = trained_model
-    agent_id = recorder.register_agent("test_agent", 50)
+    agent_id = recorder.register_agent("test_agent", 64)
 
     level_data = {
         "id": "test_level",
@@ -141,7 +141,7 @@ def test_step_data_is_valid_json(recorder, trained_model):
 
 def test_q_values_have_six_actions(recorder, trained_model):
     model, env = trained_model
-    agent_id = recorder.register_agent("test_agent", 50)
+    agent_id = recorder.register_agent("test_agent", 64)
 
     level_data = {
         "id": "test_level",
@@ -180,7 +180,7 @@ def test_q_values_have_six_actions(recorder, trained_model):
 
 def test_episode_total_reward_matches_steps(recorder, trained_model):
     model, env = trained_model
-    agent_id = recorder.register_agent("test_agent", 50)
+    agent_id = recorder.register_agent("test_agent", 64)
 
     level_data = {
         "id": "test_level",
@@ -232,7 +232,7 @@ def test_deterministic_replay(recorder, trained_model):
 
 def test_multiple_runs_recorded(recorder, trained_model):
     model, env = trained_model
-    agent_id = recorder.register_agent("test_agent", 50)
+    agent_id = recorder.register_agent("test_agent", 64)
 
     level_data = {
         "id": "test_level",
@@ -260,30 +260,49 @@ def test_multiple_runs_recorded(recorder, trained_model):
 
 
 # ---------------------------------------------------------------------------
-# Mock model for deterministic tests (avoids DQN training overhead)
+# Mock model for deterministic tests (avoids PPO training overhead)
 # ---------------------------------------------------------------------------
 
 
-class _FakeQNet:
-    """Returns fixed Q-values that always choose a specific action."""
+class _FakeActorNet:
+    """Returns fixed action logits that always choose a specific action."""
 
     def __init__(self, action: int, n_actions: int = 6):
         self.action = action
         self.n_actions = n_actions
 
-    def __call__(self, obs_tensor):
-        batch = obs_tensor.shape[0]
-        q = torch.full((batch, self.n_actions), -1.0)
-        q[:, self.action] = 1.0
-        return q
+    def __call__(self, latent_pi):
+        batch = latent_pi.shape[0]
+        logits = torch.full((batch, self.n_actions), -1.0)
+        logits[:, self.action] = 1.0
+        return logits
+
+
+class _FakeMlpExtractor:
+    """Minimal stand-in for PPO's mlp_extractor."""
+
+    def forward_actor(self, features):
+        return features
+
+
+class _FakePolicy:
+    """Minimal stand-in for PPO's policy used by Recorder.record_episode."""
+
+    def __init__(self, action: int):
+        self.pi_features_extractor = None
+        self.mlp_extractor = _FakeMlpExtractor()
+        self.action_net = _FakeActorNet(action)
+
+    def extract_features(self, obs_tensor, features_extractor):
+        return obs_tensor
 
 
 class _FakeModel:
-    """Minimal stand-in for an SB3 DQN model used by Recorder.record_episode."""
+    """Minimal stand-in for an SB3 PPO model used by Recorder.record_episode."""
 
     def __init__(self, action: int):
         self.device = torch.device("cpu")
-        self.policy = type("_P", (), {"q_net": _FakeQNet(action)})()
+        self.policy = _FakePolicy(action)
 
 
 def _make_corridor_env():
@@ -378,21 +397,21 @@ def test_grid_reflects_key_pickup(recorder):
     call_count = 0
 
     class _PickupThenRight:
-        def __call__(self, obs_tensor):
+        def __call__(self, latent_pi):
             nonlocal call_count
-            batch = obs_tensor.shape[0]
-            q = torch.full((batch, 6), -1.0)
+            batch = latent_pi.shape[0]
+            logits = torch.full((batch, 6), -1.0)
             if call_count == 0:
-                q[:, BoxworldEnv.RIGHT] = 1.0  # move onto key
+                logits[:, BoxworldEnv.RIGHT] = 1.0  # move onto key
             elif call_count == 1:
-                q[:, BoxworldEnv.PICKUP] = 1.0  # pick up key
+                logits[:, BoxworldEnv.PICKUP] = 1.0  # pick up key
             else:
-                q[:, BoxworldEnv.RIGHT] = 1.0  # continue toward goal
+                logits[:, BoxworldEnv.RIGHT] = 1.0  # continue toward goal
             call_count += 1
-            return q
+            return logits
 
     model = _FakeModel(action=0)  # dummy; overridden below
-    model.policy.q_net = _PickupThenRight()
+    model.policy.action_net = _PickupThenRight()
 
     agent_id = recorder.register_agent("fake_pickup", 0)
     level_data = {
