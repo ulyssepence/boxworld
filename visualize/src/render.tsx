@@ -199,11 +199,7 @@ function KeyModel({
   })
 
   React.useEffect(() => {
-    keyScene.traverse((child) => {
-      if (child instanceof THREE.Mesh) {
-        child.material = keyMat
-      }
-    })
+    material.applyMaterials(keyScene, [keyMat])
   }, [keyScene, keyMat])
 
   return (
@@ -348,6 +344,17 @@ export function Agent({
     }
   }, [position, prevPosition])
 
+  const agentMat = material.useCustomMaterial({
+    fragmentShader: `
+      color = lit(vec3(0.8, 0.5, 0.8), normal);
+      alpha = 1.0;
+    `,
+  })
+
+  React.useEffect(() => {
+    material.applyMaterials(clonedScene, [agentMat])
+  }, [clonedScene, agentMat])
+
   Fiber.useFrame((_, delta) => {
     if (!groupRef.current) return
     if (progress.current < 1) {
@@ -458,7 +465,7 @@ function CameraController({ target }: { target: [number, number, number] }) {
     controlsRef.current.target.set(...target)
     controlsRef.current.update()
     if (!initialized.current) {
-      camera.position.set(target[0], 10, target[2] + 6)
+      camera.position.set(target[0], 13, target[2] + 7.8)
       initialized.current = true
     }
   }, [target[0], target[1], target[2], camera])
@@ -476,7 +483,7 @@ export function Scene({
   const center = target ?? [4.5, 0, 4.5]
   return (
     <Fiber.Canvas
-      camera={{ position: [center[0], 10, center[2] + 6], fov: 50 }}
+      camera={{ position: [center[0], 13, center[2] + 7.8], fov: 50 }}
       gl={{ preserveDrawingBuffer: true }}
     >
       <shader.GLSLShader code={postProcessor}>
