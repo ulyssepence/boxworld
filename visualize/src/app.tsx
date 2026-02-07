@@ -211,7 +211,10 @@ function Sidebar() {
           >
             {state.episodes.map((ep, i) => (
               <option key={ep.id} value={i}>
-                Episode {i + 1} (reward: {ep.totalReward.toFixed(2)})
+                {ep.trainingSteps != null
+                  ? `${ep.trainingSteps.toLocaleString()} steps`
+                  : `Episode ${i + 1}`}{' '}
+                (reward: {ep.totalReward.toFixed(2)})
               </option>
             ))}
           </select>

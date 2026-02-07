@@ -82,7 +82,7 @@ export class DB {
 
     const episodeRows = this.db
       .prepare(
-        `SELECT e.id, e.agent_id, e.level_id, e.total_reward
+        `SELECT e.id, e.agent_id, e.level_id, e.total_reward, a.training_steps
          FROM episodes e
          JOIN agents a ON e.agent_id = a.id
          WHERE e.level_id = ?
@@ -93,6 +93,7 @@ export class DB {
       agent_id: string
       level_id: string
       total_reward: number
+      training_steps: number
     }[]
 
     const episodes: t.Episode[] = episodeRows.map((ep) => {
@@ -120,6 +121,7 @@ export class DB {
         levelId: ep.level_id,
         steps,
         totalReward: ep.total_reward,
+        trainingSteps: ep.training_steps,
       }
     })
 
