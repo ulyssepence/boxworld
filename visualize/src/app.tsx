@@ -27,8 +27,13 @@ function GameView() {
     ? prevStepData.state.agentPosition
     : undefined
 
-  // Use the step's game state grid if available (doors may have been toggled, keys picked up)
-  const displayLevel: t.Level = currentStepData ? currentStepData.state.level : level
+  // In edit mode, always show the live editable level. Otherwise use the step's
+  // game state grid (doors may have been toggled, keys picked up during replay).
+  const displayLevel: t.Level = state.editMode
+    ? level
+    : currentStepData
+      ? currentStepData.state.level
+      : level
 
   const handleCellClick = state.editMode
     ? (x: number, y: number) => {
