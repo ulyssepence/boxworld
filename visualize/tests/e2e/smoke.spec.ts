@@ -54,16 +54,16 @@ test.describe('Smoke Tests', () => {
     expect(response.status()).toBe(404)
   })
 
-  test('sidebar is visible with level selector', async ({ page }) => {
+  test('overlay is visible with level selector', async ({ page }) => {
     await page.goto('/')
     await page.waitForLoadState('networkidle')
 
-    // Sidebar should be visible
-    const sidebar = page.locator('.sidebar')
-    await expect(sidebar).toBeVisible()
+    // Overlay should be visible
+    const overlay = page.locator('.overlay-top')
+    await expect(overlay).toBeVisible()
 
     // Level selector should have options (loaded from API)
-    const select = sidebar.locator('select').first()
+    const select = overlay.locator('.overlay-select').first()
     await expect(select).toBeVisible()
   })
 
@@ -72,7 +72,7 @@ test.describe('Smoke Tests', () => {
     await page.waitForLoadState('networkidle')
 
     // Wait for the level select to have options
-    const select = page.locator('.sidebar select').first()
+    const select = page.locator('.overlay-top .overlay-select').first()
     // Should have at least one level option + the placeholder
     const options = select.locator('option')
     expect(await options.count()).toBeGreaterThan(1)
