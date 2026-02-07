@@ -57,6 +57,7 @@ varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vColor;
 varying vec3 vWorldPosition;
+varying vec3 vMeshOrigin;
 
 uniform float uTime;
 uniform float uDeltaTime;
@@ -66,6 +67,7 @@ ${GLSL_UTILITIES}
 
 void main() {
     vec3 worldPosition = (modelMatrix * vec4(position, 1.0)).xyz;
+    vec3 meshOrigin = modelMatrix[3].xyz;
 
     vec3 pos = position;
     vec3 norm = normal;
@@ -80,6 +82,7 @@ void main() {
     vNormal = normalize(normalMatrix * norm);
     vColor = color;
     vWorldPosition = (modelMatrix * vec4(pos, 1.0)).xyz;
+    vMeshOrigin = meshOrigin;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
 }
 `
@@ -97,6 +100,7 @@ varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vColor;
 varying vec3 vWorldPosition;
+varying vec3 vMeshOrigin;
 
 uniform float uTime;
 uniform float uDeltaTime;
@@ -120,6 +124,7 @@ void main() {
     vec3 color = vColor;
     float alpha = 1.0;
     vec3 worldPosition = vWorldPosition;
+    vec3 meshOrigin = vMeshOrigin;
     bool hasTexture = uHasTexture;
 
     // Sample texture before user code so color already includes it
@@ -212,4 +217,47 @@ export function CustomMaterial({
       side={side}
     />
   )
+}
+
+/** Create a THREE.ShaderMaterial imperatively (for applying to GLB meshes).
+ *  Returns a stable material + a useFrame hook that updates time uniforms. */
+export function useCustomMaterial(props: CustomMaterialProps = {}): THREE.ShaderMaterial {
+  const {
+    color = '#888888',
+    texture,
+    transparent = false,
+    blending = THREE.NormalBlending,
+    depthWrite = true,
+    side = THREE.FrontSide,
+    vertexShader: customVertex,
+    fragmentShader: customFragment,
+  } = props
+
+  const mat = React.useMemo(() => {
+    const colorObj = color instanceof THREE.Color ? color : new THREE.Color(color)
+    const hasTexture = !!texture
+    return new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: { value: 0 },
+        uDeltaTime: { value: 0 },
+        uColor: { value: colorObj },
+        uHasTexture: { value: hasTexture },
+        tex: { value: texture ?? DUMMY_TEXTURE },
+      },
+      vertexShader: buildVertexShader(customVertex),
+      fragmentShader: buildFragmentShader(customFragment),
+      transparent,
+      blending,
+      depthWrite,
+      side,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [color, texture, customVertex, customFragment, transparent, blending, depthWrite, side])
+
+  Fiber.useFrame((state, delta) => {
+    mat.uniforms.uTime.value = state.clock.elapsedTime
+    mat.uniforms.uDeltaTime.value = delta
+  })
+
+  return mat
 }

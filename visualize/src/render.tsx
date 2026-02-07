@@ -12,11 +12,12 @@ const WallMaterial = (
   <material.CustomMaterial
     vertexShader={`
       if (0.0 < worldPosition.y) {
-        position.y += sin(position.z * 3.0 + position.x * 3.0 + t / 3.0 * TAU) * 0.07;
+        position += sin(position.x * 6.0 + position.z * 3.0 + t / 3.0 * TAU) * 0.07;
+        position += sin(t / 6.0 * TAU) * normalize(worldPosition - meshOrigin) * 0.02;
       }
     `}
     fragmentShader={`
-      color = lit(vec3(0.4), normal);
+      color = lit(vec3(0.1), normal) * 0.4;
       alpha = 1.0;
     `}
   />
@@ -26,6 +27,26 @@ const LavaColor1 = 'vec3(1.0, 0.3, 0.0)'
 const LavaColor2 = 'vec3(1.0, 0.7, 0.0)'
 const LavaMaterial = (
   <material.CustomMaterial
+    fragmentShader={`
+      float mask = float(perlin_noise(worldPosition.xz * 3.0 + t / 4.0) < 0.5);
+      color = lit(
+        mix(
+          ${LavaColor1},
+          ${LavaColor2},
+          mask
+        ),
+        normal
+      );
+      alpha = 1.0;
+    `}
+  />
+)
+
+const FloorMaterial = (
+  <material.CustomMaterial
+    vertexShader={`
+      position.y += sin(position.z * 6.0 + position.x * 6.0 + t * TAU) * 0.02;
+    `}
     fragmentShader={`
       float mask = float(perlin_noise(worldPosition.xz * 3.0) < 0.5);
       color = lit(
@@ -156,6 +177,42 @@ export function Walls({
   )
 }
 
+/** A single key GLB instance with CustomMaterial applied to all child meshes */
+function KeyModel({
+  position,
+  onClick,
+}: {
+  position: [number, number, number]
+  onClick?: (e: { stopPropagation: () => void }) => void
+}) {
+  const keyGLB = Drei.useGLTF('/static/models/key.glb')
+  const keyScene = React.useMemo(() => keyGLB.scene.clone(true), [keyGLB.scene])
+  const keyMat = material.useCustomMaterial({
+    vertexShader: `
+      position.xz = rotate2d(position.xz, t / 5.0 * TAU);
+      position.y += sin(position.z * 6.0 + position.x * 6.0 + t * TAU) * 0.02;
+    `,
+    fragmentShader: `
+      color = vec3(1.0, 0.8, 0.0);
+      alpha = 1.0;
+    `,
+  })
+
+  React.useEffect(() => {
+    keyScene.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        child.material = keyMat
+      }
+    })
+  }, [keyScene, keyMat])
+
+  return (
+    <group position={position} onClick={onClick}>
+      <primitive object={keyScene} />
+    </group>
+  )
+}
+
 /** Keys, doors, goals, lava - rendered as distinctive shapes on top of floor */
 export function Items({
   level,
@@ -209,20 +266,12 @@ export function Items({
               </mesh>
             )
           case t.CellType.Key:
-            // Key: small floating octahedron
             return (
-              <mesh
+              <KeyModel
                 key={key}
                 position={[item.x, 0.35, item.y]}
                 onClick={clickHandler(item.x, item.y)}
-              >
-                <octahedronGeometry args={[0.2]} />
-                <meshStandardMaterial
-                  color={COLORS.key}
-                  emissive={COLORS.key}
-                  emissiveIntensity={0.3}
-                />
-              </mesh>
+              />
             )
           case t.CellType.Goal:
             // Goal: glowing cylinder
@@ -384,17 +433,17 @@ const postProcessor = `
   vec3 original = scene(uv);
   if (original.x == 0.0 && original.y == 0.0 && original.z == 0.0) {
     // uv = (uv + triangle(floor_to_nearest(uv.y, band_size / 4.0)) * 6.28) * 3.0;
-    uv = uv * 3.0;
+    uv = uv * 6.0;
     color = vec3(
-      scene(vec2(direction * t / period_secs, 0.0) + uv + voronoi_noise(t / 4.0 + uv *  10.0) * 0.008).x,
-      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv *  10.0) * 0.008).y,
-      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.005).z
+      scene(vec2(direction * t / period_secs, 0.0) + uv + voronoi_noise(t / 4.0 + uv * 10.0) * 0.002).x,
+      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv * 10.0) * 0.003).y,
+      scene(vec2(direction * t / period_secs, 0.0) + uv - voronoi_noise(t / 4.0 + uv * 10.0) * 0.002).z
     ) * 0.05;
   } else {
     color = vec3(
-      scene(uv + voronoi_noise(t / 4.0 + uv * 10.0) * 0.008).x,
-      scene(uv - voronoi_noise(t / 4.0 + uv * 10.0) * 0.004).y,
-      scene(uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.005).z
+      scene(uv + voronoi_noise(t / 4.0 + uv * 100.0) * 0.002).x,
+      scene(uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.003).y,
+      scene(uv - voronoi_noise(t / 4.0 + uv * 100.0) * 0.002).z
     );
   }
 `
