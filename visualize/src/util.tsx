@@ -1,5 +1,29 @@
 import * as React from 'react'
 import * as t from './types'
+import * as play from './play'
+import * as ml from './ml'
+
+export interface LiveInferenceState {
+  active: boolean
+  running: boolean
+  gameState: t.GameState | null
+  prevAgentPosition: [number, number] | null
+  lastAction: t.Action | null
+  lastQValues: t.QValues | null
+  stepCount: number
+  history: t.Step[]
+}
+
+const initialLiveInference: LiveInferenceState = {
+  active: false,
+  running: false,
+  gameState: null,
+  prevAgentPosition: null,
+  lastAction: null,
+  lastQValues: null,
+  stepCount: 0,
+  history: [],
+}
 
 export interface AppState {
   levels: t.LevelInfo[]
@@ -13,6 +37,7 @@ export interface AppState {
   playbackSpeed: number // steps per second
   editMode: boolean
   inferenceLoading: boolean
+  liveInference: LiveInferenceState
 }
 
 export type AppAction =
@@ -31,6 +56,17 @@ export type AppAction =
   | { type: 'RESET_LEVEL' }
   | { type: 'LOAD_INFERENCE_EPISODE'; episode: t.Episode }
   | { type: 'SET_INFERENCE_LOADING'; loading: boolean }
+  | { type: 'START_LIVE_INFERENCE' }
+  | {
+      type: 'LIVE_STEP'
+      action: t.Action
+      qValues: t.QValues
+      newState: t.GameState
+      preStepGrid: t.CellType[][]
+    }
+  | { type: 'LIVE_PLAY' }
+  | { type: 'LIVE_PAUSE' }
+  | { type: 'STOP_LIVE_INFERENCE' }
 
 const initialState: AppState = {
   levels: [],
@@ -44,6 +80,7 @@ const initialState: AppState = {
   playbackSpeed: 4,
   editMode: false,
   inferenceLoading: false,
+  liveInference: initialLiveInference,
 }
 
 function getMaxStep(state: AppState): number {
@@ -74,6 +111,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         currentStep: 0,
         isPlaying: false,
         editMode: false,
+        liveInference: initialLiveInference,
       }
 
     case 'SET_EPISODE':
@@ -114,6 +152,11 @@ function reducer(state: AppState, action: AppAction): AppState {
 
     case 'EDIT_CELL': {
       if (!state.currentLevel) return state
+      // Block edits to the cell the agent is standing on during live inference
+      if (state.liveInference.active && state.liveInference.gameState) {
+        const [agentX, agentY] = state.liveInference.gameState.agentPosition
+        if (action.x === agentX && action.y === agentY) return state
+      }
       const grid = state.currentLevel.grid.map((row) => [...row])
       grid[action.y][action.x] = action.cellType
       return {
@@ -148,6 +191,112 @@ function reducer(state: AppState, action: AppAction): AppState {
 
     case 'SET_INFERENCE_LOADING':
       return { ...state, inferenceLoading: action.loading }
+
+    case 'START_LIVE_INFERENCE': {
+      if (!state.currentLevel) return state
+      const gameState = play.createInitialState(state.currentLevel)
+      return {
+        ...state,
+        episodes: [],
+        currentEpisodeIndex: 0,
+        currentStep: 0,
+        isPlaying: false,
+        editMode: false,
+        liveInference: {
+          active: true,
+          running: false,
+          gameState,
+          prevAgentPosition: null,
+          lastAction: null,
+          lastQValues: null,
+          stepCount: 0,
+          history: [],
+        },
+      }
+    }
+
+    case 'LIVE_STEP': {
+      const li = state.liveInference
+      if (!li.active || !li.gameState || !state.currentLevel) return state
+      const prevPos: [number, number] = [
+        li.gameState.agentPosition[0],
+        li.gameState.agentPosition[1],
+      ]
+      const historyStep: t.Step = {
+        state: li.gameState,
+        action: action.action,
+        reward: action.newState.reward - li.gameState.reward,
+        qValues: action.qValues,
+      }
+      // Apply only agent-caused grid changes (key pickup, door toggle) on top of
+      // the current level grid, preserving any user edits made since the tick started.
+      // Diff the tick's input grid (preStepGrid) against the output grid (newState)
+      // to find agent-caused changes, then patch onto the current grid.
+      const mergedGrid = state.currentLevel.grid.map((row) => [...row])
+      const outputGrid = action.newState.level.grid
+      for (let y = 0; y < state.currentLevel.height; y++) {
+        for (let x = 0; x < state.currentLevel.width; x++) {
+          if (action.preStepGrid[y][x] !== outputGrid[y][x]) {
+            mergedGrid[y][x] = outputGrid[y][x]
+          }
+        }
+      }
+      // Update newState's level to use the merged grid so gameState stays consistent
+      const updatedNewState: t.GameState = {
+        ...action.newState,
+        level: { ...state.currentLevel, grid: mergedGrid },
+      }
+      return {
+        ...state,
+        currentLevel: { ...state.currentLevel, grid: mergedGrid },
+        liveInference: {
+          ...li,
+          gameState: updatedNewState,
+          prevAgentPosition: prevPos,
+          lastAction: action.action,
+          lastQValues: action.qValues,
+          stepCount: li.stepCount + 1,
+          history: [...li.history, historyStep],
+        },
+      }
+    }
+
+    case 'LIVE_PLAY':
+      return {
+        ...state,
+        liveInference: { ...state.liveInference, running: true },
+      }
+
+    case 'LIVE_PAUSE':
+      return {
+        ...state,
+        liveInference: { ...state.liveInference, running: false },
+      }
+
+    case 'STOP_LIVE_INFERENCE': {
+      const li = state.liveInference
+      const episodes = [...state.episodes]
+      if (li.history.length > 0) {
+        const lastStep = li.history[li.history.length - 1]
+        const totalReward = lastStep.state.reward + lastStep.reward
+        const episode: t.Episode = {
+          id: `live-${Date.now()}`,
+          agentId: 'onnx-live',
+          levelId: state.currentLevel?.id ?? '',
+          steps: li.history,
+          totalReward,
+        }
+        episodes.push(episode)
+      }
+      return {
+        ...state,
+        episodes,
+        currentEpisodeIndex: episodes.length > 0 ? episodes.length - 1 : 0,
+        currentStep: 0,
+        isPlaying: false,
+        liveInference: initialLiveInference,
+      }
+    }
 
     default:
       return state
@@ -185,4 +334,58 @@ export function usePlayback() {
 
     return () => clearInterval(id)
   }, [state.isPlaying, state.playbackSpeed, state.currentEpisodeIndex, state.episodes, dispatch])
+}
+
+export function useLiveInference() {
+  const [state, dispatch] = useApp()
+  const agentRef = React.useRef<ml.Agent | null>(null)
+  const stateRef = React.useRef(state)
+  const tickInProgressRef = React.useRef(false)
+
+  stateRef.current = state
+
+  const tick = React.useCallback(async () => {
+    if (tickInProgressRef.current) return
+    tickInProgressRef.current = true
+    try {
+      const s = stateRef.current
+      const agent = agentRef.current
+      const gs = s.liveInference.gameState
+      if (!agent || !gs || !s.currentLevel || gs.done || s.liveInference.stepCount >= 200) {
+        dispatch({ type: 'LIVE_PAUSE' })
+        return
+      }
+      // Merge: use agent's position/inventory but the current level's grid (picks up user edits)
+      const merged: t.GameState = {
+        ...gs,
+        level: s.currentLevel,
+      }
+      const preStepGrid = s.currentLevel.grid
+      const { action, qValues } = await agent.selectAction(merged)
+      const newState = play.step(merged, action)
+      dispatch({ type: 'LIVE_STEP', action, qValues, newState, preStepGrid })
+      if (newState.done || s.liveInference.stepCount + 1 >= 200) {
+        dispatch({ type: 'LIVE_PAUSE' })
+      }
+    } finally {
+      tickInProgressRef.current = false
+    }
+  }, [dispatch])
+
+  // Auto-stepping interval when active && running
+  React.useEffect(() => {
+    const li = state.liveInference
+    if (!li.active || !li.running) return
+
+    const intervalMs = 1000 / state.playbackSpeed
+    const id = setInterval(tick, intervalMs)
+    return () => clearInterval(id)
+  }, [state.liveInference.active, state.liveInference.running, state.playbackSpeed, tick])
+
+  const stepOnce = React.useCallback(async () => {
+    dispatch({ type: 'LIVE_PAUSE' })
+    await tick()
+  }, [dispatch, tick])
+
+  return { agentRef, stepOnce }
 }
