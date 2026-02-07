@@ -79,12 +79,18 @@ class Recorder:
         level_data: dict,
         agent_id: str,
         run_number: int,
+        epsilon: float = 0.0,
+        seed: int | None = None,
     ) -> str:
-        """Play one complete episode using the model's greedy policy and record every step.
+        """Play one complete episode and record every step.
+
+        Uses epsilon-greedy: with probability epsilon, picks a random action
+        instead of the greedy argmax. Set epsilon=0 for deterministic replay.
 
         Returns the episode_id.
         """
         episode_id = uuid.uuid4().hex
+        rng = np.random.default_rng(seed)
 
         # Don't call env.reset() — the caller has already configured the env state
         # (grid, agent_pos, has_key, etc.). Calling reset() would overwrite with a
@@ -109,8 +115,11 @@ class Recorder:
 
             q_dict = {str(i): float(action_logits[i]) for i in range(6)}
 
-            # Greedy action (argmax of logits works identically to argmax of Q-values)
-            action = int(np.argmax(action_logits))
+            # Epsilon-greedy action selection
+            if epsilon > 0 and rng.random() < epsilon:
+                action = int(rng.integers(0, 6))
+            else:
+                action = int(np.argmax(action_logits))
 
             # Build state_json BEFORE taking the step (current state)
             # Use the env's current grid (which mutates on key pickup / door toggle),
@@ -296,6 +305,9 @@ class Recorder:
                     level_env._steps = 0
                     level_env._last_direction = BoxworldEnv.UP
 
+                    # Run 0 is deterministic (best greedy trajectory),
+                    # subsequent runs use epsilon-greedy for variety
+                    epsilon = 0.0 if run == 0 else 0.1
                     episode_id = self.record_episode(
                         model=model,
                         env=level_env,
@@ -303,6 +315,8 @@ class Recorder:
                         level_data=level_data,
                         agent_id=agent_id,
                         run_number=run + 1,
+                        epsilon=epsilon,
+                        seed=run,
                     )
                     print(
                         f"  Recorded episode {episode_id[:8]}... "

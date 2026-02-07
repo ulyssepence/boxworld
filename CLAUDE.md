@@ -6,7 +6,7 @@ RL training + web visualization for a grid-based puzzle game. PPO agent learns t
 
 ```bash
 # Python (from training/)
-uv run python main.py train          # Train PPO agent (1M steps)
+uv run python main.py train          # Train PPO agent (2M steps)
 uv run python main.py export         # Export checkpoints to ONNX
 uv run python main.py record         # Record episodes to SQLite
 uv run python main.py all            # Full pipeline: train → export → record
