@@ -64,7 +64,11 @@ function GameView() {
       <render.Grid level={displayLevel} onCellClick={handleCellClick} />
       <render.Walls level={displayLevel} onCellClick={handleCellClick} />
       <render.Items level={displayLevel} onCellClick={handleCellClick} />
-      <render.Agent position={agentPos} prevPosition={prevAgentPos} />
+      <render.Agent
+        position={agentPos}
+        prevPosition={prevAgentPos}
+        stepsPerSecond={state.playbackSpeed}
+      />
       <render.QValueArrows qValues={currentStepData?.qValues} position={agentPos} />
     </>
   )
@@ -115,6 +119,18 @@ async function runAgent(
 function Sidebar() {
   const [state, dispatch] = util.useApp()
   const [selectedCheckpointId, setSelectedCheckpointId] = React.useState<string>('')
+
+  // Space key toggles play/pause
+  React.useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && e.target === document.body) {
+        e.preventDefault()
+        dispatch({ type: state.isPlaying ? 'PAUSE' : 'PLAY' })
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [state.isPlaying, dispatch])
 
   // Fetch levels on mount
   React.useEffect(() => {

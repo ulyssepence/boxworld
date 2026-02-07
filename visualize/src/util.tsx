@@ -95,12 +95,12 @@ function reducer(state: AppState, action: AppAction): AppState {
 
     case 'STEP_FORWARD': {
       const max = getMaxStep(state)
-      const next = Math.min(state.currentStep + 1, max)
-      return {
-        ...state,
-        currentStep: next,
-        isPlaying: next >= max ? false : state.isPlaying,
+      const next = state.currentStep + 1
+      if (next > max) {
+        // Loop back to start
+        return { ...state, currentStep: 0 }
       }
+      return { ...state, currentStep: next }
     }
 
     case 'STEP_BACKWARD':
