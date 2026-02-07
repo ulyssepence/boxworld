@@ -1,6 +1,5 @@
 """Tests for the BoxworldEnv gymnasium environment."""
 
-import json
 import os
 import tempfile
 
@@ -263,7 +262,7 @@ def test_different_seeds_produce_different_layouts():
 
 def test_load_level_from_json():
     level_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "data", "levels", "door_key.json"
+        os.path.dirname(__file__), "..", "..", "data", "levels", "door_key.txt"
     )
     level_path = os.path.normpath(level_path)
     env = BoxworldEnv(level_path=level_path)
@@ -274,39 +273,28 @@ def test_load_level_from_json():
     assert info["agent_pos"] == [1, 1]
 
 
-def test_load_level_grid_matches_json():
+def test_load_level_grid_matches_file():
     level_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "data", "levels", "door_key.json"
+        os.path.dirname(__file__), "..", "..", "data", "levels", "door_key.txt"
     )
     level_path = os.path.normpath(level_path)
     env = BoxworldEnv(level_path=level_path)
     env.reset()
 
-    with open(level_path) as f:
-        data = json.load(f)
+    from level_parser import load_level
+
+    data = load_level(level_path)
 
     for y in range(env._height):
         for x in range(env._width):
             assert env._grid[y][x] == data["grid"][y][x]
 
 
-def test_load_custom_json_level():
-    """Create a temp JSON level and load it."""
-    level_data = {
-        "id": "test_level",
-        "name": "Test Level",
-        "width": 4,
-        "height": 4,
-        "grid": [
-            [1, 1, 1, 1],
-            [1, 0, 0, 1],
-            [1, 0, 4, 1],
-            [1, 1, 1, 1],
-        ],
-        "agentStart": [1, 1],
-    }
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump(level_data, f)
+def test_load_custom_txt_level():
+    """Create a temp .txt level and load it."""
+    level_text = "####\n#A #\n# G#\n####\n"
+    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
+        f.write(level_text)
         tmp_path = f.name
 
     try:
@@ -778,7 +766,7 @@ def test_solve_subgoals_single_door():
 def test_solve_subgoals_door_key():
     """door_key level should produce key→door→goal chain."""
     level_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "data", "levels", "door_key.json"
+        os.path.dirname(__file__), "..", "..", "data", "levels", "door_key.txt"
     )
     level_path = os.path.normpath(level_path)
     env = BoxworldEnv(level_path=level_path)
@@ -792,7 +780,7 @@ def test_solve_subgoals_door_key():
 def test_solve_subgoals_two_rooms():
     """two_rooms level should produce key→door→goal chain."""
     level_path = os.path.join(
-        os.path.dirname(__file__), "..", "..", "data", "levels", "two_rooms.json"
+        os.path.dirname(__file__), "..", "..", "data", "levels", "two_rooms.txt"
     )
     level_path = os.path.normpath(level_path)
     env = BoxworldEnv(level_path=level_path)
@@ -882,6 +870,11 @@ def test_weighted_level_sampling():
         "lava_crossing": 0.0,
         "door_key": 0.0,
         "two_rooms": 1.0,  # always selected
+        "two_keys": 0.0,
+        "open_shortcut": 0.0,
+        "three_keys": 0.0,
+        "zigzag_lava": 0.0,
+        "dead_ends": 0.0,
     }
     env = BoxworldEnv(
         levels_dir=levels_dir,
@@ -918,3 +911,58 @@ def test_no_door_adjacent_bonus_without_key():
     _, reward, _, _, _ = env.step(BoxworldEnv.RIGHT)
     # Shaping toward key subgoal (3,1): 0.05*(2-1) = 0.05, no door bonus
     assert reward == pytest.approx(-0.01 + 0.05)
+
+
+# ---------------------------------------------------------------------------
+# Solvability tests for new levels
+# ---------------------------------------------------------------------------
+
+
+def _load_level_env(level_name: str) -> BoxworldEnv:
+    """Load a .txt level into a BoxworldEnv and run _solve_subgoals."""
+    from level_parser import load_level
+
+    level_path = os.path.join(
+        os.path.dirname(__file__), "..", "..", "data", "levels", f"{level_name}.txt"
+    )
+    level_path = os.path.normpath(level_path)
+    data = load_level(level_path)
+    env = BoxworldEnv(width=data["width"], height=data["height"])
+    env.reset(seed=0)
+    env._grid = [list(row) for row in data["grid"]]
+    env._agent_pos = list(data["agentStart"])
+    env._has_key = False
+    env._solve_subgoals()
+    return env
+
+
+@pytest.mark.parametrize(
+    "level_name",
+    ["two_keys", "open_shortcut", "three_keys", "zigzag_lava", "dead_ends"],
+)
+def test_new_level_solvable(level_name: str):
+    """Each new level should have a valid subgoal chain ending with 'goal'."""
+    env = _load_level_env(level_name)
+    assert len(env._subgoals) > 0, f"{level_name}: no subgoals found"
+    assert env._subgoals[-1][0] == "goal", f"{level_name}: chain doesn't end with goal"
+
+
+def test_two_keys_has_two_door_pairs():
+    """two_keys level should have key→door→key→door→goal chain."""
+    env = _load_level_env("two_keys")
+    types = [sg[0] for sg in env._subgoals]
+    assert types == ["key", "door", "key", "door", "goal"]
+
+
+def test_three_keys_has_three_door_pairs():
+    """three_keys level should have 3 key→door pairs then goal."""
+    env = _load_level_env("three_keys")
+    types = [sg[0] for sg in env._subgoals]
+    assert types == ["key", "door", "key", "door", "key", "door", "goal"]
+
+
+def test_open_shortcut_no_doors_needed():
+    """open_shortcut should be solvable without any keys (shortcut bypasses door)."""
+    env = _load_level_env("open_shortcut")
+    types = [sg[0] for sg in env._subgoals]
+    assert types == ["goal"], "Should reach goal directly via shortcut"
