@@ -369,10 +369,17 @@ function Overlay() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [state.viewMode, state.isPlaying, li.running, dispatch])
 
-  // Fetch levels on mount
+  // Fetch levels on mount, auto-load the first one
   React.useEffect(() => {
     api.fetchLevels().then((levels) => {
       dispatch({ type: 'LOAD_LEVELS', levels })
+      if (levels.length > 0) {
+        api.fetchLevel(levels[0].id).then((data) => {
+          if (data.level) {
+            dispatch({ type: 'LOAD_LEVEL', level: data.level, episodes: data.episodes })
+          }
+        })
+      }
     })
     api.fetchCheckpoints().then((checkpoints) => {
       dispatch({ type: 'LOAD_CHECKPOINTS', checkpoints })
@@ -404,10 +411,16 @@ function Overlay() {
       {/* Top overlay — single horizontal bar */}
       <div className="overlay-top">
         <span className="title">Boxworld</span>
-        <select className="overlay-select" onChange={handleLevelChange} defaultValue="">
-          <option value="" disabled>
-            Select a level...
-          </option>
+        <select
+          className="overlay-select"
+          onChange={handleLevelChange}
+          value={state.currentLevel?.id ?? ''}
+        >
+          {!state.currentLevel && (
+            <option value="" disabled>
+              Select a level...
+            </option>
+          )}
           {state.levels.map((l) => (
             <option key={l.id} value={l.id}>
               {l.name}
