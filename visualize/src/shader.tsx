@@ -9,8 +9,9 @@ export interface GLSLShaderProps {
   children?: React.ReactNode
 }
 
-const GLSL_UTILITIES = `
+export const GLSL_UTILITIES = `
 #define PI 3.1415926535897932384626433832795
+#define TAU 6.283185307179586476925286766559
 
 float one_minus (float a) {
     return 1.0 - a;
