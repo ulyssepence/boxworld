@@ -2,9 +2,44 @@ import * as React from 'react'
 import * as Fiber from '@react-three/fiber'
 import * as Drei from '@react-three/drei'
 import * as THREE from 'three'
-import * as t from './types'
+import * as material from './material'
+import * as particles from './particles'
 import * as play from './play'
-import GLSLShader from './shader'
+import * as shader from './shader'
+import * as t from './types'
+
+const WallMaterial = (
+  <material.CustomMaterial
+    vertexShader={`
+      if (0.0 < worldPosition.y) {
+        position.y += sin(position.z * 3.0 + position.x * 3.0 + t / 3.0 * TAU) * 0.07;
+      }
+    `}
+    fragmentShader={`
+      color = lit(vec3(0.4), normal);
+      alpha = 1.0;
+    `}
+  />
+)
+
+const LavaColor1 = 'vec3(1.0, 0.3, 0.0)'
+const LavaColor2 = 'vec3(1.0, 0.7, 0.0)'
+const LavaMaterial = (
+  <material.CustomMaterial
+    fragmentShader={`
+      float mask = float(perlin_noise(worldPosition.xz * 3.0) < 0.5);
+      color = lit(
+        mix(
+          ${LavaColor1},
+          ${LavaColor2},
+          mask
+        ),
+        normal
+      );
+      alpha = 1.0;
+    `}
+  />
+)
 
 // Colors
 const COLORS = {
@@ -114,7 +149,7 @@ export function Walls({
           }
         >
           <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial color={COLORS.wall} />
+          {WallMaterial}
         </mesh>
       ))}
     </group>
@@ -215,11 +250,7 @@ export function Items({
                 onClick={clickHandler(item.x, item.y)}
               >
                 <planeGeometry args={[0.95, 0.95]} />
-                <meshStandardMaterial
-                  color={COLORS.lava}
-                  emissive={COLORS.lava}
-                  emissiveIntensity={0.4}
-                />
+                {LavaMaterial}
               </mesh>
             )
           default:
@@ -281,6 +312,23 @@ export function Agent({
   return (
     <group ref={groupRef} position={[position[0], 0, position[1]]}>
       <primitive object={clonedScene} />
+      <particles.Particles
+        count={300}
+        origin={[0, 1, 0]}
+        velocity={[0, 3, 0]}
+        velocitySpread={[2, 1, 2]}
+        gravity={[0, -6, 0]}
+        lifetime={[0.5, 2.0]}
+        size={[0.03, 0.1]}
+        color="#330033"
+        opacity={[1, 1]}
+        blending={THREE.AdditiveBlending}
+        fragmentShader={`
+            color *= 1.0 + 0.5 * sin(t * 10.0 + seed * 6.28);
+            float d = length(uv - vec2(0.5)) * one_minus(age);
+            alpha *= smoothstep(0.5, 0.2, d);
+          `}
+      />
     </group>
   )
 }
@@ -382,12 +430,12 @@ export function Scene({
       camera={{ position: [center[0], 10, center[2] + 6], fov: 50 }}
       gl={{ preserveDrawingBuffer: true }}
     >
-      <GLSLShader code={postProcessor}>
+      <shader.GLSLShader code={postProcessor}>
         <ambientLight intensity={0.6} />
         <directionalLight position={[10, 10, 5]} intensity={0.8} />
         <CameraController target={center} />
         {children}
-      </GLSLShader>
+      </shader.GLSLShader>
     </Fiber.Canvas>
   )
 }
