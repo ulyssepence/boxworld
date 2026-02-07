@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite'
 import fs from 'fs'
 import path from 'path'
+import { parseLevel } from './level-parser'
 import * as t from './types'
 
 export class DB {
@@ -54,31 +55,22 @@ export class DB {
   getLevels(levelsDir: string): t.LevelInfo[] {
     if (!fs.existsSync(levelsDir)) return []
 
-    const files = fs.readdirSync(levelsDir).filter((f) => f.endsWith('.json'))
+    const files = fs.readdirSync(levelsDir).filter((f) => f.endsWith('.txt'))
     return files.map((f) => {
       const raw = fs.readFileSync(path.join(levelsDir, f), 'utf-8')
-      const json = JSON.parse(raw)
-      const info: t.LevelInfo = { id: json.id, name: json.name }
-      if (json.seed !== undefined) info.seed = json.seed
+      const levelId = path.basename(f, '.txt')
+      const level = parseLevel(raw, levelId)
+      const info: t.LevelInfo = { id: level.id, name: level.name }
       return info
     })
   }
 
   getLevelWithEpisodes(levelId: string, levelsDir: string): t.LevelWithEpisodes | null {
-    const levelPath = path.join(levelsDir, `${levelId}.json`)
+    const levelPath = path.join(levelsDir, `${levelId}.txt`)
     if (!fs.existsSync(levelPath)) return null
 
     const raw = fs.readFileSync(levelPath, 'utf-8')
-    const json = JSON.parse(raw)
-    const level: t.Level = {
-      id: json.id,
-      name: json.name,
-      width: json.width,
-      height: json.height,
-      grid: json.grid as t.CellType[][],
-      agentStart: json.agentStart as [number, number],
-      seed: json.seed,
-    }
+    const level = parseLevel(raw, levelId)
 
     const episodeRows = this.db
       .prepare(

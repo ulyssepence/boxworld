@@ -21,6 +21,11 @@ DESIGNED_LEVELS = [
     "lava_crossing",
     "door_key",
     "two_rooms",
+    "two_keys",
+    "open_shortcut",
+    "three_keys",
+    "zigzag_lava",
+    "dead_ends",
 ]
 
 HAS_DB = DB_PATH.exists()

@@ -13,6 +13,11 @@ def cmd_train(args):
         "lava_crossing": 1.0,
         "door_key": 1.0,
         "two_rooms": 1.0,
+        "two_keys": 1.0,
+        "open_shortcut": 1.0,
+        "three_keys": 1.0,
+        "zigzag_lava": 1.0,
+        "dead_ends": 1.0,
     }
     env_kwargs = {
         "levels_dir": args.levels_dir,
