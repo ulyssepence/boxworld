@@ -72,13 +72,13 @@ export class DB {
     const raw = fs.readFileSync(levelPath, 'utf-8')
     const level = parseLevel(raw, levelId)
 
-    const episodeRows = this.db
+    const allEpisodeRows = this.db
       .prepare(
         `SELECT e.id, e.agent_id, e.level_id, e.total_reward, a.training_steps
          FROM episodes e
          JOIN agents a ON e.agent_id = a.id
          WHERE e.level_id = ?
-         ORDER BY e.total_reward DESC, a.training_steps DESC, e.run_number`,
+         ORDER BY a.training_steps ASC, e.run_number`,
       )
       .all(levelId) as {
       id: string
@@ -87,6 +87,16 @@ export class DB {
       total_reward: number
       training_steps: number
     }[]
+
+    // Pick up to 5 evenly spaced episodes across training steps, newest first
+    const episodeRows = (
+      allEpisodeRows.length <= 5
+        ? allEpisodeRows
+        : Array.from({ length: 5 }, (_, i) => {
+            const idx = Math.round((i * (allEpisodeRows.length - 1)) / 4)
+            return allEpisodeRows[idx]
+          })
+    ).reverse()
 
     const episodes: t.Episode[] = episodeRows.map((ep) => {
       const stepRows = this.db
