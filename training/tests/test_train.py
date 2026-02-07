@@ -1,4 +1,4 @@
-"""Tests for the DQN training pipeline."""
+"""Tests for the PPO training pipeline."""
 
 import os
 import tempfile
@@ -48,7 +48,7 @@ def test_checkpoint_can_be_loaded():
 
 def test_custom_hyperparameters():
     env = BoxworldEnv()
-    config = TrainerConfig(learning_rate=1e-3, batch_size=64)
+    config = TrainerConfig(learning_rate=1e-3, batch_size=32)
     trainer = Trainer(env, config)
     assert trainer.config.learning_rate == 1e-3
-    assert trainer.config.batch_size == 64
+    assert trainer.config.batch_size == 32

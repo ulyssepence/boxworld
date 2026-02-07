@@ -44,6 +44,7 @@ class BoxworldEnv(gymnasium.Env):
     REWARD_STEP = -0.01
     REWARD_PICKUP = 0.2
     REWARD_TOGGLE = 0.2
+    REWARD_DOOR_ADJACENT = 0.0  # disabled — was causing bonus farming
 
     MAX_STEPS = 200
 
@@ -54,6 +55,7 @@ class BoxworldEnv(gymnasium.Env):
         height: int = 10,
         levels_dir: str | None = None,
         designed_level_prob: float = 0.0,
+        level_weights: dict[str, float] | None = None,
     ):
         super().__init__()
 
@@ -72,19 +74,32 @@ class BoxworldEnv(gymnasium.Env):
                 if data.get("width") == width and data.get("height") == height:
                     self._designed_levels.append(data)
 
+        # Compute normalized weights for designed level sampling
+        self._level_weights: np.ndarray | None = None
+        if self._designed_levels and level_weights:
+            weights = [level_weights.get(lv["id"], 1.0) for lv in self._designed_levels]
+            total = sum(weights)
+            self._level_weights = np.array([w / total for w in weights])
+
         # Will be set during reset
         self._grid: list[list[int]] = []
         self._agent_pos: list[int] = [0, 0]  # [x, y]
         self._has_key: bool = False
         self._steps: int = 0
         self._last_direction: int = self.UP  # default facing direction
+        self._subgoals: list[tuple[str, tuple[int, int]]] = []
+        self._subgoal_index: int = 0
 
         # If level_path provided, load it to get correct dimensions for spaces
         if level_path is not None:
             self._load_level(level_path)
 
         obs_size = self._width * self._height + 3
-        self.observation_space = spaces.Box(low=0.0, high=5.0, shape=(obs_size,), dtype=np.float32)
+        high = np.full(obs_size, 5.0, dtype=np.float32)
+        high[-3] = float(self._width - 1)  # agent_x
+        high[-2] = float(self._height - 1)  # agent_y
+        high[-1] = 1.0  # has_key
+        self.observation_space = spaces.Box(low=0.0, high=high, shape=(obs_size,), dtype=np.float32)
         self.action_space = spaces.Discrete(6)
 
     def reset(
@@ -105,12 +120,17 @@ class BoxworldEnv(gymnasium.Env):
         if self._level_path is not None:
             self._load_level(self._level_path)
         elif self._designed_levels and self.np_random.random() < self._designed_level_prob:
-            level = self._designed_levels[self.np_random.integers(len(self._designed_levels))]
+            if self._level_weights is not None:
+                idx = int(self.np_random.choice(len(self._designed_levels), p=self._level_weights))
+            else:
+                idx = int(self.np_random.integers(len(self._designed_levels)))
+            level = self._designed_levels[idx]
             self._grid = [list(row) for row in level["grid"]]
             self._agent_pos = list(level["agentStart"])
         else:
             self._generate_level(seed)
 
+        self._solve_subgoals()
         return self._get_obs(), self._get_info()
 
     def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict]:
@@ -120,9 +140,9 @@ class BoxworldEnv(gymnasium.Env):
         terminated = False
         truncated = False
 
-        old_goal_dist = self._goal_distance()
-        old_key_dist = self._key_distance()
+        old_x, old_y = self._agent_pos
         had_key = self._has_key
+        toggled_door = False
 
         if action in (self.UP, self.DOWN, self.LEFT, self.RIGHT):
             reward, terminated = self._handle_move(action)
@@ -133,18 +153,23 @@ class BoxworldEnv(gymnasium.Env):
         elif action == self.TOGGLE:
             if self._handle_toggle():
                 reward += self.REWARD_TOGGLE
+                toggled_door = True
 
-        # Potential-based reward shaping
-        if not terminated:
-            new_goal_dist = self._goal_distance()
-            # Primary: shape toward goal if path exists
-            if old_goal_dist is not None and new_goal_dist is not None:
-                reward += 0.1 * (old_goal_dist - new_goal_dist)
-            # Secondary: shape toward key when goal is unreachable and no key held
-            elif old_goal_dist is None and not self._has_key:
-                new_key_dist = self._key_distance()
-                if old_key_dist is not None and new_key_dist is not None:
-                    reward += 0.1 * (old_key_dist - new_key_dist)
+        # Advance subgoal index on key pickup or door toggle
+        if self._subgoal_index < len(self._subgoals):
+            sg_type, _ = self._subgoals[self._subgoal_index]
+            if sg_type == "key" and not had_key and self._has_key:
+                self._subgoal_index += 1
+            elif sg_type == "door" and toggled_door:
+                self._subgoal_index += 1
+
+        # Subgoal-chain reward shaping (bidirectional: reward closer, penalize farther)
+        if not terminated and self._subgoal_index < len(self._subgoals):
+            _, subgoal_pos = self._subgoals[self._subgoal_index]
+            old_dist = self._bfs_distance_safe(old_x, old_y, *subgoal_pos)
+            new_dist = self._bfs_distance_safe(self._agent_pos[0], self._agent_pos[1], *subgoal_pos)
+            if old_dist is not None and new_dist is not None and new_dist != old_dist:
+                reward += 0.05 * (old_dist - new_dist)
 
         if self._steps >= self.MAX_STEPS and not terminated:
             truncated = True
@@ -188,25 +213,23 @@ class BoxworldEnv(gymnasium.Env):
             self._grid[y][x] = self.FLOOR
 
     def _handle_toggle(self) -> bool:
-        """Handle the toggle action. Opens a door adjacent in the last move direction if has_key.
+        """Handle the toggle action. Opens any adjacent door if has_key.
 
+        Checks all 4 cardinal directions (matching TypeScript play.ts behavior).
         Returns True if a door was opened, False otherwise.
         """
         if not self._has_key:
             return False
 
-        dx, dy = self._action_to_delta(self._last_direction)
-        door_x = self._agent_pos[0] + dx
-        door_y = self._agent_pos[1] + dy
-
-        # Bounds check
-        if not (0 <= door_x < self._width and 0 <= door_y < self._height):
-            return False
-
-        if self._grid[door_y][door_x] == self.DOOR:
-            self._grid[door_y][door_x] = self.FLOOR
-            self._has_key = False
-            return True
+        ax, ay = self._agent_pos
+        for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+            door_x, door_y = ax + dx, ay + dy
+            if not (0 <= door_x < self._width and 0 <= door_y < self._height):
+                continue
+            if self._grid[door_y][door_x] == self.DOOR:
+                self._grid[door_y][door_x] = self.FLOOR
+                self._has_key = False
+                return True
         return False
 
     def _get_obs(self) -> np.ndarray:
@@ -229,6 +252,113 @@ class BoxworldEnv(gymnasium.Env):
             "has_key": self._has_key,
             "steps": self._steps,
         }
+
+    def _solve_subgoals(self) -> None:
+        """Pre-solve the level to compute a subgoal chain: key→door→key→door→...→goal.
+
+        Operates on a copy of the grid to simulate key pickups and door opens.
+        Stores result in self._subgoals and resets self._subgoal_index to 0.
+        """
+        from collections import deque
+
+        self._subgoals = []
+        self._subgoal_index = 0
+
+        # Work on a copy so we can simulate key pickups and door opens
+        grid = [list(row) for row in self._grid]
+        pos = tuple(self._agent_pos)
+        w, h = self._width, self._height
+
+        def bfs_find(
+            start: tuple[int, int], target_type: int, g: list[list[int]]
+        ) -> tuple[int, int] | None:
+            """BFS from start to nearest cell of target_type. Doors are impassable."""
+            visited = {start}
+            queue = deque([start])
+            while queue:
+                cx, cy = queue.popleft()
+                for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                    nx, ny = cx + dx, cy + dy
+                    if not (0 <= nx < w and 0 <= ny < h):
+                        continue
+                    if (nx, ny) in visited:
+                        continue
+                    cell = g[ny][nx]
+                    if cell == self.WALL or cell == self.DOOR:
+                        continue
+                    if cell == target_type:
+                        return (nx, ny)
+                    visited.add((nx, ny))
+                    queue.append((nx, ny))
+            return None
+
+        # Try to build subgoal chain: find keys and doors iteratively
+        max_iterations = 10  # safety limit
+        for _ in range(max_iterations):
+            # Can we reach the goal directly?
+            goal_pos = bfs_find(pos, self.GOAL, grid)
+            if goal_pos is not None:
+                self._subgoals.append(("goal", goal_pos))
+                return
+
+            # Can't reach goal — look for a reachable key
+            key_pos = bfs_find(pos, self.KEY, grid)
+            if key_pos is None:
+                # No reachable key and no reachable goal — unsolvable from here
+                break
+
+            self._subgoals.append(("key", key_pos))
+            # Simulate picking up the key
+            grid[key_pos[1]][key_pos[0]] = self.FLOOR
+            pos = key_pos
+
+            # Now find the nearest reachable door (BFS treats doors as impassable,
+            # but we want the nearest door *adjacent* to a reachable cell)
+            door_pos = self._find_nearest_door(pos, grid)
+            if door_pos is None:
+                break
+
+            self._subgoals.append(("door", door_pos))
+            # Simulate opening the door
+            grid[door_pos[1]][door_pos[0]] = self.FLOOR
+            pos = door_pos
+
+        # If we couldn't build a complete chain, try goal as fallback
+        goal_pos = bfs_find(pos, self.GOAL, grid)
+        if goal_pos is not None and (not self._subgoals or self._subgoals[-1][0] != "goal"):
+            self._subgoals.append(("goal", goal_pos))
+
+    def _find_nearest_door(
+        self, start: tuple[int, int], grid: list[list[int]]
+    ) -> tuple[int, int] | None:
+        """BFS to find the nearest door adjacent to a reachable floor cell."""
+        from collections import deque
+
+        w, h = self._width, self._height
+        visited = {start}
+        queue = deque([start])
+        seen_doors: set[tuple[int, int]] = set()
+        nearest_door: tuple[int, int] | None = None
+        # BFS layer by layer — first door found is nearest
+        while queue:
+            cx, cy = queue.popleft()
+            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                nx, ny = cx + dx, cy + dy
+                if not (0 <= nx < w and 0 <= ny < h):
+                    continue
+                if (nx, ny) in visited:
+                    continue
+                cell = grid[ny][nx]
+                if cell == self.DOOR and (nx, ny) not in seen_doors:
+                    if nearest_door is None:
+                        nearest_door = (nx, ny)
+                    seen_doors.add((nx, ny))
+                    continue  # don't traverse through the door
+                if cell == self.WALL:
+                    continue
+                visited.add((nx, ny))
+                queue.append((nx, ny))
+        return nearest_door
 
     def _load_level(self, path: str) -> None:
         """Load a level from a JSON file."""
@@ -351,12 +481,22 @@ class BoxworldEnv(gymnasium.Env):
         self._agent_pos = [ax, ay]
         self._grid[gy][gx] = self.GOAL
 
-        # --- Optionally add a door + key (~30% chance) ---
-        if rng.random() < 0.3:
+        # --- Optionally add door/key pairs (probabilistic multi-door) ---
+        # 40% no doors, 35% one, 15% two, 10% three
+        roll = rng.random()
+        if roll < 0.40:
+            num_doors = 0
+        elif roll < 0.75:
+            num_doors = 1
+        elif roll < 0.90:
+            num_doors = 2
+        else:
+            num_doors = 3
+        for _ in range(num_doors):
             self._add_door_and_key(rng, ax, ay, gx, gy)
 
-        # --- Optionally add lava (~20% chance) ---
-        if rng.random() < 0.2:
+        # --- Optionally add lava (~30% chance) ---
+        if rng.random() < 0.3:
             self._add_lava(rng, ax, ay, gx, gy)
 
     def _bfs_distance(self, sx: int, sy: int, tx: int, ty: int) -> float | None:
@@ -375,11 +515,11 @@ class BoxworldEnv(gymnasium.Env):
                     continue
                 if (nx, ny) in visited:
                     continue
+                if (nx, ny) == (tx, ty):
+                    return float(dist + 1)
                 cell = self._grid[ny][nx]
                 if cell == self.WALL or cell == self.DOOR:
                     continue
-                if (nx, ny) == (tx, ty):
-                    return float(dist + 1)
                 visited.add((nx, ny))
                 queue.append(((nx, ny), dist + 1))
         return None
@@ -507,7 +647,11 @@ class BoxworldEnv(gymnasium.Env):
                 self._grid[y][x] = self.FLOOR
 
     def _bfs_distance_safe(self, sx: int, sy: int, tx: int, ty: int) -> float | None:
-        """BFS distance avoiding walls, doors, AND lava."""
+        """BFS distance avoiding walls, doors, AND lava.
+
+        The target cell itself is always reachable (e.g. a door subgoal can be
+        reached even though doors are otherwise impassable).
+        """
         from collections import deque
 
         if (sx, sy) == (tx, ty):
@@ -522,11 +666,12 @@ class BoxworldEnv(gymnasium.Env):
                     continue
                 if (nx, ny) in visited:
                     continue
+                # Always allow reaching the target (e.g. door subgoal)
+                if (nx, ny) == (tx, ty):
+                    return float(dist + 1)
                 cell = self._grid[ny][nx]
                 if cell in (self.WALL, self.DOOR, self.LAVA):
                     continue
-                if (nx, ny) == (tx, ty):
-                    return float(dist + 1)
                 visited.add((nx, ny))
                 queue.append(((nx, ny), dist + 1))
         return None
