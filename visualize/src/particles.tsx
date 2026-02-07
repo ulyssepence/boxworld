@@ -43,6 +43,7 @@ export interface ParticlesProps {
   blending?: THREE.Blending
   /** Depth write (default: false for transparent particles) */
   depthWrite?: boolean
+  seed?: number
 }
 
 // --- Shader sources ---
@@ -165,6 +166,7 @@ export function Particles({
   fragmentShader: customFragment,
   blending = THREE.NormalBlending,
   depthWrite = false,
+  seed = 42,
 }: ParticlesProps) {
   const materialRef = React.useRef<THREE.ShaderMaterial>(null!)
   const pointsRef = React.useRef<THREE.Points>(null!)
@@ -180,7 +182,7 @@ export function Particles({
   // from the parent don't cause a rebuild when values haven't changed.
   const geometry = React.useMemo(() => {
     const geo = new THREE.BufferGeometry()
-    const rng = mulberry32(42)
+    const rng = mulberry32(seed)
 
     const positions = new Float32Array(count * 3)
     const birthTimes = new Float32Array(count)

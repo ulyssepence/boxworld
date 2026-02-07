@@ -11,8 +11,14 @@ function cycleCellType(currentCell: t.CellType): t.CellType {
     case t.CellType.Floor:
       return t.CellType.Wall
     case t.CellType.Wall:
+      return t.CellType.Door
+    case t.CellType.Door:
+      return t.CellType.Key
+    case t.CellType.Key:
       return t.CellType.Goal
     case t.CellType.Goal:
+      return t.CellType.Lava
+    case t.CellType.Lava:
       return t.CellType.Floor
     default:
       return t.CellType.Floor
