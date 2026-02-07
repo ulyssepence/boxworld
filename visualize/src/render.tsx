@@ -224,9 +224,11 @@ const AGENT_ROTATION_OFFSET = 0
 export function Agent({
   position,
   prevPosition,
+  stepsPerSecond = 4,
 }: {
   position: [number, number]
   prevPosition?: [number, number]
+  stepsPerSecond?: number
 }) {
   const groupRef = React.useRef<THREE.Group>(null!)
   const { scene } = Drei.useGLTF('/static/models/player.glb')
@@ -256,7 +258,8 @@ export function Agent({
   Fiber.useFrame((_, delta) => {
     if (!groupRef.current) return
     if (progress.current < 1) {
-      progress.current = Math.min(1, progress.current + delta * 8)
+      // Lerp completes in exactly 1/stepsPerSecond seconds
+      progress.current = Math.min(1, progress.current + delta * stepsPerSecond)
       groupRef.current.position.lerpVectors(startPos.current, targetPos.current, progress.current)
     }
     groupRef.current.rotation.y = facingAngle.current
