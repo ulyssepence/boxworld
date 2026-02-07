@@ -13,6 +13,11 @@ def cmd_train(args):
         "lava_crossing": 1.0,
         "door_key": 1.0,
         "two_rooms": 1.0,
+        "two_keys": 2.0,
+        "open_shortcut": 1.0,
+        "three_keys": 3.0,
+        "zigzag_lava": 1.0,
+        "dead_ends": 1.5,
     }
     env_kwargs = {
         "levels_dir": args.levels_dir,
@@ -95,8 +100,8 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     train_parser = subparsers.add_parser("train", help="Train PPO agent")
-    train_parser.add_argument("--steps", type=int, default=2_000_000)
-    train_parser.add_argument("--interval", type=int, default=25_000)
+    train_parser.add_argument("--steps", type=int, default=5_000_000)
+    train_parser.add_argument("--interval", type=int, default=50_000)
     train_parser.add_argument("--checkpoint-dir", default="../data/checkpoints")
     train_parser.add_argument("--levels-dir", default="../data/levels")
     train_parser.set_defaults(func=cmd_train)
@@ -121,8 +126,8 @@ def main():
     export_parser.set_defaults(func=cmd_export)
 
     all_parser = subparsers.add_parser("all", help="Run full pipeline: train -> export -> record")
-    all_parser.add_argument("--steps", type=int, default=2_000_000)
-    all_parser.add_argument("--interval", type=int, default=25_000)
+    all_parser.add_argument("--steps", type=int, default=5_000_000)
+    all_parser.add_argument("--interval", type=int, default=50_000)
     all_parser.add_argument("--checkpoint-dir", default="../data/checkpoints")
     all_parser.add_argument("--output-dir", default=None)
     all_parser.add_argument("--db", default="../data/db.sqlite")

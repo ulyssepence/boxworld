@@ -245,7 +245,9 @@ class Recorder:
             print(f"Using only highest checkpoint: {min_steps} steps")
 
         # Discover level files
-        level_pattern = os.path.join(levels_dir, "*.json")
+        from level_parser import load_level
+
+        level_pattern = os.path.join(levels_dir, "*.txt")
         level_files = sorted(glob.glob(level_pattern))
 
         if not level_files:
@@ -255,8 +257,7 @@ class Recorder:
         # Load all level data
         levels: list[dict] = []
         for level_file in level_files:
-            with open(level_file) as f:
-                levels.append(json.load(f))
+            levels.append(load_level(level_file))
 
         for checkpoint_file in checkpoint_files:
             # Extract training steps from filename

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import glob
-import json
 import os
 
 import gymnasium
@@ -67,9 +66,10 @@ class BoxworldEnv(gymnasium.Env):
         # Load hand-designed levels for mixed training
         self._designed_levels: list[dict] = []
         if levels_dir is not None:
-            for path in sorted(glob.glob(os.path.join(levels_dir, "*.json"))):
-                with open(path) as f:
-                    data = json.load(f)
+            from level_parser import load_level
+
+            for path in sorted(glob.glob(os.path.join(levels_dir, "*.txt"))):
+                data = load_level(path)
                 # Only include levels matching our grid dimensions
                 if data.get("width") == width and data.get("height") == height:
                     self._designed_levels.append(data)
@@ -361,9 +361,16 @@ class BoxworldEnv(gymnasium.Env):
         return nearest_door
 
     def _load_level(self, path: str) -> None:
-        """Load a level from a JSON file."""
-        with open(path) as f:
-            data = json.load(f)
+        """Load a level from a .txt or .json file."""
+        if path.endswith(".txt"):
+            from level_parser import load_level
+
+            data = load_level(path)
+        else:
+            import json
+
+            with open(path) as f:
+                data = json.load(f)
 
         self._width = data["width"]
         self._height = data["height"]
