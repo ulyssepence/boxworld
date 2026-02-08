@@ -1,0 +1,50 @@
+# Git
+.git
+.gitignore
+
+# Documentation & plans
+docs/
+*.md
+CLAUDE.md
+LICENSE
+
+# Claude / AI tooling
+.claude/
+conversations/
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+training/.venv/
+training/.ruff_cache/
+training/.pytest_cache/
+
+# Node artifacts
+visualize/node_modules/
+visualize/test-results/
+visualize/playwright-report/
+
+# Build artifacts (regenerated in Docker build)
+visualize/static/client.js
+visualize/static/ort*
+
+# Data (mounted as volume, not baked into image)
+data/db.sqlite
+data/db.sqlite-shm
+data/db.sqlite-wal
+data/checkpoints/
+
+# Blender files
+*.blend
+*.blend1
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Playwright MCP
+.playwright-mcp/
