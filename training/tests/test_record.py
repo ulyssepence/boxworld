@@ -458,11 +458,11 @@ def test_multiple_runs_have_different_rewards(recorder):
     """Bug repro: all runs on same level produce identical rewards because
     the env state is reset identically and the policy is deterministic argmax.
 
-    With epsilon-greedy recording (runs 2+), we expect at least 2 distinct rewards
+    With stochastic recording (runs 2+), we expect at least 2 distinct rewards
     out of 5 runs."""
     env, grid = _make_corridor_env()
     # Use a model that always goes RIGHT — deterministic argmax reaches goal every time
-    # with identical reward. Epsilon-greedy should cause divergent trajectories.
+    # with identical reward. Stochastic sampling should cause divergent trajectories.
     model = _FakeModel(action=BoxworldEnv.RIGHT)
     agent_id = recorder.register_agent("fake_multi", 0)
 
@@ -484,8 +484,7 @@ def test_multiple_runs_have_different_rewards(recorder):
         env._steps = 0
         env._last_direction = BoxworldEnv.UP
 
-        # Run 1 is deterministic (epsilon=0), runs 2+ have epsilon=0.1
-        epsilon = 0.0 if run == 0 else 0.1
+        # Run 0 is deterministic, runs 1+ sample from policy distribution
         episode_id = recorder.record_episode(
             model=model,
             env=env,
@@ -493,7 +492,7 @@ def test_multiple_runs_have_different_rewards(recorder):
             level_data=level_data,
             agent_id=agent_id,
             run_number=run + 1,
-            epsilon=epsilon,
+            stochastic=run > 0,
             seed=run,
         )
 
@@ -504,7 +503,7 @@ def test_multiple_runs_have_different_rewards(recorder):
 
     distinct_rewards = len(set(rewards))
     assert distinct_rewards >= 2, (
-        f"Expected at least 2 distinct rewards from 5 runs with epsilon-greedy, "
+        f"Expected at least 2 distinct rewards from 5 runs with stochastic sampling, "
         f"but got {distinct_rewards}: {rewards}"
     )
 
