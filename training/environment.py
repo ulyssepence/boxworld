@@ -55,6 +55,7 @@ class BoxworldEnv(gymnasium.Env):
         levels_dir: str | None = None,
         designed_level_prob: float = 0.0,
         level_weights: dict[str, float] | None = None,
+        exclude_levels: list[str] | None = None,
     ):
         super().__init__()
 
@@ -73,6 +74,11 @@ class BoxworldEnv(gymnasium.Env):
                 # Only include levels matching our grid dimensions
                 if data.get("width") == width and data.get("height") == height:
                     self._designed_levels.append(data)
+
+        if exclude_levels:
+            self._designed_levels = [
+                lv for lv in self._designed_levels if lv["id"] not in exclude_levels
+            ]
 
         # Compute normalized weights for designed level sampling
         self._level_weights: np.ndarray | None = None
@@ -378,118 +384,94 @@ class BoxworldEnv(gymnasium.Env):
         self._grid = [list(row) for row in data["grid"]]
         self._agent_pos = list(data["agentStart"])
 
-    def _generate_level(self, seed: int | None) -> None:
-        """Generate a procedural maze level using recursive backtracker.
-
-        Produces corridor-based mazes with optional doors, keys, and lava.
-        Ensures the level is solvable with a minimum BFS distance of 5.
-        """
-        from collections import deque
-
-        rng = np.random.default_rng(seed)
+    def _init_border(self) -> None:
+        """Create an all-floor grid with wall border."""
         w, h = self._width, self._height
+        self._grid = [[self.FLOOR for _ in range(w)] for _ in range(h)]
+        for x in range(w):
+            self._grid[0][x] = self.WALL
+            self._grid[h - 1][x] = self.WALL
+        for y in range(h):
+            self._grid[y][0] = self.WALL
+            self._grid[y][w - 1] = self.WALL
 
-        # --- Maze carving via recursive backtracker (DFS) ---
-        # Work on odd-indexed cells as "rooms", walls between them.
-        # Interior maze grid: cells at odd coords in [1, w-2] x [1, h-2]
-        self._grid = [[self.WALL for _ in range(w)] for _ in range(h)]
+    def _place_agent_and_goal(
+        self,
+        rng: np.random.Generator,
+        min_dist: int = 5,
+        floor_cells: list[tuple[int, int]] | None = None,
+    ) -> tuple[int, int, int, int]:
+        """Place agent and goal on floor cells with minimum BFS distance.
 
-        # Maze cells are at odd coordinates within the border
-        maze_w = (w - 1) // 2  # number of maze columns
-        maze_h = (h - 1) // 2  # number of maze rows
+        Returns (agent_x, agent_y, goal_x, goal_y).
+        """
+        if floor_cells is None:
+            floor_cells = [
+                (x, y)
+                for y in range(1, self._height - 1)
+                for x in range(1, self._width - 1)
+                if self._grid[y][x] == self.FLOOR
+            ]
 
-        if maze_w < 1 or maze_h < 1:
-            # Grid too small for maze, fallback to open room
-            self._grid = [[self.FLOOR for _ in range(w)] for _ in range(h)]
-            for x in range(w):
-                self._grid[0][x] = self.WALL
-                self._grid[h - 1][x] = self.WALL
-            for y in range(h):
-                self._grid[y][0] = self.WALL
-                self._grid[y][w - 1] = self.WALL
+        if len(floor_cells) < 2:
             self._agent_pos = [1, 1]
-            self._grid[h - 2][w - 2] = self.GOAL
-            return
+            self._grid[self._height - 2][self._width - 2] = self.GOAL
+            return (1, 1, self._width - 2, self._height - 2)
 
-        visited_maze = [[False] * maze_w for _ in range(maze_h)]
-
-        # Map maze coords to grid coords
-        def to_grid(mx: int, my: int) -> tuple[int, int]:
-            return (1 + mx * 2, 1 + my * 2)
-
-        # Start maze from random cell
-        start_mx = int(rng.integers(maze_w))
-        start_my = int(rng.integers(maze_h))
-        visited_maze[start_my][start_mx] = True
-        gx, gy = to_grid(start_mx, start_my)
-        self._grid[gy][gx] = self.FLOOR
-
-        stack = [(start_mx, start_my)]
-        directions = [(0, -1), (0, 1), (-1, 0), (1, 0)]
-
-        while stack:
-            cx, cy = stack[-1]
-            # Find unvisited neighbors
-            neighbors = []
-            for dx, dy in directions:
-                nx, ny = cx + dx, cy + dy
-                if 0 <= nx < maze_w and 0 <= ny < maze_h and not visited_maze[ny][nx]:
-                    neighbors.append((nx, ny, dx, dy))
-
-            if not neighbors:
-                stack.pop()
-                continue
-
-            # Pick random neighbor
-            idx = int(rng.integers(len(neighbors)))
-            nx, ny, dx, dy = neighbors[idx]
-            visited_maze[ny][nx] = True
-
-            # Carve passage: open the neighbor cell and the wall between
-            ngx, ngy = to_grid(nx, ny)
-            wall_gx = to_grid(cx, cy)[0] + dx
-            wall_gy = to_grid(cx, cy)[1] + dy
-            self._grid[ngy][ngx] = self.FLOOR
-            self._grid[wall_gy][wall_gx] = self.FLOOR
-
-            stack.append((nx, ny))
-
-        # --- Collect floor cells ---
-        floor_cells = []
-        for y in range(1, h - 1):
-            for x in range(1, w - 1):
-                if self._grid[y][x] == self.FLOOR:
-                    floor_cells.append((x, y))
-
-        if len(floor_cells) < 3:
-            # Shouldn't happen with a proper maze, but fallback
-            self._agent_pos = [1, 1]
-            self._grid[1][1] = self.FLOOR
-            self._grid[h - 2][w - 2] = self.GOAL
-            return
-
-        # --- Place agent and goal with minimum BFS distance ---
-        min_dist = 5
         max_attempts = 50
         for _ in range(max_attempts):
             indices = rng.choice(len(floor_cells), size=2, replace=False)
             ax, ay = floor_cells[int(indices[0])]
             gx, gy = floor_cells[int(indices[1])]
-            # Quick BFS distance check
             dist = self._bfs_distance(ax, ay, gx, gy)
             if dist is not None and dist >= min_dist:
                 break
         else:
-            # Accept whatever we got
             indices = rng.choice(len(floor_cells), size=2, replace=False)
             ax, ay = floor_cells[int(indices[0])]
             gx, gy = floor_cells[int(indices[1])]
 
         self._agent_pos = [ax, ay]
         self._grid[gy][gx] = self.GOAL
+        return (ax, ay, gx, gy)
 
-        # --- Optionally add door/key pairs (probabilistic multi-door) ---
-        # 40% no doors, 35% one, 15% two, 10% three
+    def _generate_level(self, seed: int | None) -> None:
+        """Generate a procedural level with varied layout styles.
+
+        Dispatches to one of 5 generators to produce layouts matching
+        the variety of user-designed levels (open rooms, partitions, lava
+        fields, wall segments, and hybrids).
+        """
+        rng = np.random.default_rng(seed)
+        roll = rng.random()
+        if roll < 0.10:
+            self._gen_open_room(rng)
+        elif roll < 0.30:
+            self._gen_room_partition(rng)
+        elif roll < 0.50:
+            self._gen_lava_field(rng)
+        elif roll < 0.65:
+            self._gen_wall_segments(rng)
+        else:
+            self._gen_hybrid(rng)
+
+    def _gen_open_room(self, rng: np.random.Generator) -> None:
+        """Open room with 0-6 scattered wall cells."""
+        self._init_border()
+        w, h = self._width, self._height
+
+        # Place 0-6 scattered single wall cells
+        num_walls = int(rng.integers(0, 7))
+        interior = [(x, y) for y in range(1, h - 1) for x in range(1, w - 1)]
+        if num_walls > 0 and interior:
+            indices = rng.choice(len(interior), size=min(num_walls, len(interior)), replace=False)
+            for idx in indices:
+                x, y = interior[int(idx)]
+                self._grid[y][x] = self.WALL
+
+        ax, ay, gx, gy = self._place_agent_and_goal(rng, min_dist=7)
+
+        # 40% chance door/key
         roll = rng.random()
         if roll < 0.40:
             num_doors = 0
@@ -502,9 +484,350 @@ class BoxworldEnv(gymnasium.Env):
         for _ in range(num_doors):
             self._add_door_and_key(rng, ax, ay, gx, gy)
 
-        # --- Optionally add lava (~30% chance) ---
-        if rng.random() < 0.3:
+        # 50% chance lava
+        if rng.random() < 0.5:
             self._add_lava(rng, ax, ay, gx, gy)
+
+    def _gen_room_partition(self, rng: np.random.Generator) -> None:
+        """Rooms divided by wall partitions with door gaps."""
+        self._init_border()
+        w, h = self._width, self._height
+
+        # Pick number of partitions: 40% one, 40% two, 20% three
+        roll = rng.random()
+        if roll < 0.40:
+            num_partitions = 1
+        elif roll < 0.80:
+            num_partitions = 2
+        else:
+            num_partitions = 3
+
+        door_positions: list[tuple[int, int]] = []
+        used_positions: set[int] = set()
+
+        for _ in range(num_partitions):
+            horizontal = rng.random() < 0.5
+
+            if horizontal:
+                # Wall across a row
+                valid = [y for y in range(2, h - 2) if y not in used_positions]
+                if not valid:
+                    continue
+                pos = valid[int(rng.integers(len(valid)))]
+                used_positions.add(pos)
+                # Fill row with walls
+                for x in range(1, w - 1):
+                    self._grid[pos][x] = self.WALL
+                # Cut 1 gap and place a door
+                gap_x = int(rng.integers(1, w - 1))
+                self._grid[pos][gap_x] = self.DOOR
+                door_positions.append((gap_x, pos))
+            else:
+                # Wall down a column
+                valid = [x for x in range(2, w - 2) if x not in used_positions]
+                if not valid:
+                    continue
+                pos = valid[int(rng.integers(len(valid)))]
+                used_positions.add(pos)
+                for y in range(1, h - 1):
+                    self._grid[y][pos] = self.WALL
+                gap_y = int(rng.integers(1, h - 1))
+                self._grid[gap_y][pos] = self.DOOR
+                door_positions.append((pos, gap_y))
+
+        # Place agent and goal
+        ax, ay, gx, gy = self._place_agent_and_goal(rng, min_dist=5)
+
+        # Place keys only for doors that survived (weren't overwritten by later partitions)
+        surviving_doors = [
+            (dx, dy) for (dx, dy) in door_positions if self._grid[dy][dx] == self.DOOR
+        ]
+        for door_x, door_y in surviving_doors:
+            reachable = self._bfs_reachable(ax, ay)
+            key_candidates = [
+                (x, y)
+                for (x, y) in reachable
+                if self._grid[y][x] == self.FLOOR and (x, y) != (ax, ay) and (x, y) != (gx, gy)
+            ]
+            if key_candidates:
+                kx, ky = key_candidates[int(rng.integers(len(key_candidates)))]
+                self._grid[ky][kx] = self.KEY
+
+        # 50% chance lava
+        if rng.random() < 0.5:
+            self._add_lava(rng, ax, ay, gx, gy)
+
+    def _gen_lava_field(self, rng: np.random.Generator) -> None:
+        """Open room with lava strips/patches."""
+        self._init_border()
+        w, h = self._width, self._height
+
+        # Need at least 8x8 for strip/zigzag patterns, fall back to patches
+        if h < 8 or w < 8:
+            # Small grid: just place a few lava patches
+            for _ in range(int(rng.integers(1, 4))):
+                px = int(rng.integers(1, w - 1))
+                py = int(rng.integers(1, h - 1))
+                if self._grid[py][px] == self.FLOOR:
+                    self._grid[py][px] = self.LAVA
+        else:
+            roll = rng.random()
+            if roll < 0.30:
+                # Horizontal strips: 1-3 rows of lava spanning 60-80% of width
+                num_strips = int(rng.integers(1, 4))
+                for _ in range(num_strips):
+                    row = int(rng.integers(3, h - 3))
+                    min_len = max(1, int(0.6 * (w - 2)))
+                    max_len = max(min_len + 1, int(0.8 * (w - 2)) + 1)
+                    strip_len = int(rng.integers(min_len, max_len))
+                    start_x = int(rng.integers(1, max(2, w - 1 - strip_len)))
+                    end_x = min(start_x + strip_len, w - 1)
+                    for x in range(start_x, end_x):
+                        self._grid[row][x] = self.LAVA
+                    # Cut 1-2 gaps
+                    if end_x > start_x:
+                        num_gaps = int(rng.integers(1, 3))
+                        for _ in range(num_gaps):
+                            gap_x = int(rng.integers(start_x, end_x))
+                            self._grid[row][gap_x] = self.FLOOR
+            elif roll < 0.75:
+                # Zigzag: 3-5 alternating strips at different rows with offset gaps
+                available_rows = list(range(2, h - 2))
+                num_rows = min(int(rng.integers(3, 6)), len(available_rows))
+                if num_rows > 0:
+                    rows = sorted(rng.choice(available_rows, size=num_rows, replace=False))
+                    for i, row in enumerate(rows):
+                        row = int(row)
+                        for x in range(1, w - 1):
+                            self._grid[row][x] = self.LAVA
+                        # Offset gaps — 1-2 cells wide
+                        gap_x = 1 + (i * 3) % (w - 2)
+                        self._grid[row][gap_x] = self.FLOOR
+                        if rng.random() < 0.5 and gap_x + 1 < w - 1:
+                            self._grid[row][gap_x + 1] = self.FLOOR
+            else:
+                # Patches: 2-4 connected lava patches of 2-4 cells each
+                num_patches = int(rng.integers(2, 5))
+                for _ in range(num_patches):
+                    px = int(rng.integers(2, w - 2))
+                    py = int(rng.integers(2, h - 2))
+                    patch_size = int(rng.integers(2, 5))
+                    cells = [(px, py)]
+                    for _ in range(patch_size - 1):
+                        cx, cy = cells[-1]
+                        dx, dy = [(0, 1), (0, -1), (1, 0), (-1, 0)][int(rng.integers(4))]
+                        nx, ny = cx + dx, cy + dy
+                        if 1 <= nx < w - 1 and 1 <= ny < h - 1:
+                            cells.append((nx, ny))
+                    for cx, cy in cells:
+                        self._grid[cy][cx] = self.LAVA
+
+        # Place agent above lava region, goal below
+        top_floor = [
+            (x, y)
+            for y in range(1, h // 2)
+            for x in range(1, w - 1)
+            if self._grid[y][x] == self.FLOOR
+        ]
+        bot_floor = [
+            (x, y)
+            for y in range(h // 2, h - 1)
+            for x in range(1, w - 1)
+            if self._grid[y][x] == self.FLOOR
+        ]
+
+        if top_floor and bot_floor:
+            ai = int(rng.integers(len(top_floor)))
+            ax, ay = top_floor[ai]
+            self._agent_pos = [ax, ay]
+            gi = int(rng.integers(len(bot_floor)))
+            gx, gy = bot_floor[gi]
+            self._grid[gy][gx] = self.GOAL
+        else:
+            ax, ay, gx, gy = self._place_agent_and_goal(rng, min_dist=5)
+
+        # Verify solvability, widen gaps if blocked
+        for _ in range(20):
+            if self._bfs_distance_safe(ax, ay, gx, gy) is not None:
+                break
+            # Find a lava cell and clear it
+            lava_cells = [
+                (x, y)
+                for y in range(1, h - 1)
+                for x in range(1, w - 1)
+                if self._grid[y][x] == self.LAVA
+            ]
+            if not lava_cells:
+                break
+            rx, ry = lava_cells[int(rng.integers(len(lava_cells)))]
+            self._grid[ry][rx] = self.FLOOR
+
+        # 40% chance door/key — combining lava + doors is important for generalization
+        if rng.random() < 0.4:
+            self._add_door_and_key(rng, ax, ay, gx, gy)
+
+    def _gen_wall_segments(self, rng: np.random.Generator) -> None:
+        """Wall segments creating corridors and channels."""
+        self._init_border()
+        w, h = self._width, self._height
+
+        num_segments = int(rng.integers(3, 6))
+        segment_positions: list[tuple[bool, int]] = []  # (is_horizontal, position)
+
+        for _ in range(num_segments):
+            horizontal = rng.random() < 0.5
+
+            if horizontal:
+                # Check spacing from existing horizontal segments
+                valid = [
+                    y
+                    for y in range(2, h - 2)
+                    if all(abs(y - p) >= 2 for is_h, p in segment_positions if is_h)
+                ]
+                if not valid:
+                    continue
+                row = valid[int(rng.integers(len(valid)))]
+                segment_positions.append((True, row))
+                # Span 50-80% of grid width
+                span = int(rng.integers(int(0.5 * (w - 2)), int(0.8 * (w - 2)) + 1))
+                start_x = int(rng.integers(1, max(2, w - 1 - span)))
+                for x in range(start_x, min(start_x + span, w - 1)):
+                    self._grid[row][x] = self.WALL
+            else:
+                valid = [
+                    x
+                    for x in range(2, w - 2)
+                    if all(abs(x - p) >= 2 for is_h, p in segment_positions if not is_h)
+                ]
+                if not valid:
+                    continue
+                col = valid[int(rng.integers(len(valid)))]
+                segment_positions.append((False, col))
+                span = int(rng.integers(int(0.5 * (h - 2)), int(0.8 * (h - 2)) + 1))
+                start_y = int(rng.integers(1, max(2, h - 1 - span)))
+                for y in range(start_y, min(start_y + span, h - 1)):
+                    self._grid[y][col] = self.WALL
+
+        ax, ay, gx, gy = self._place_agent_and_goal(rng, min_dist=5)
+
+        # 40% chance door/key
+        roll = rng.random()
+        if roll < 0.40:
+            num_doors = 0
+        elif roll < 0.75:
+            num_doors = 1
+        elif roll < 0.90:
+            num_doors = 2
+        else:
+            num_doors = 3
+        for _ in range(num_doors):
+            self._add_door_and_key(rng, ax, ay, gx, gy)
+
+        # 50% chance lava
+        if rng.random() < 0.5:
+            self._add_lava(rng, ax, ay, gx, gy)
+
+    def _gen_hybrid(self, rng: np.random.Generator) -> None:
+        """Room partition base with lava patches near the goal."""
+        self._init_border()
+        w, h = self._width, self._height
+
+        # 1-2 partitions with doors
+        num_partitions = int(rng.integers(1, 3))
+        door_positions: list[tuple[int, int]] = []
+        used_positions: set[int] = set()
+
+        for _ in range(num_partitions):
+            horizontal = rng.random() < 0.5
+            if horizontal:
+                valid = [y for y in range(2, h - 2) if y not in used_positions]
+                if not valid:
+                    continue
+                pos = valid[int(rng.integers(len(valid)))]
+                used_positions.add(pos)
+                for x in range(1, w - 1):
+                    self._grid[pos][x] = self.WALL
+                gap_x = int(rng.integers(1, w - 1))
+                self._grid[pos][gap_x] = self.DOOR
+                door_positions.append((gap_x, pos))
+            else:
+                valid = [x for x in range(2, w - 2) if x not in used_positions]
+                if not valid:
+                    continue
+                pos = valid[int(rng.integers(len(valid)))]
+                used_positions.add(pos)
+                for y in range(1, h - 1):
+                    self._grid[y][pos] = self.WALL
+                gap_y = int(rng.integers(1, h - 1))
+                self._grid[gap_y][pos] = self.DOOR
+                door_positions.append((pos, gap_y))
+
+        ax, ay, gx, gy = self._place_agent_and_goal(rng, min_dist=5)
+
+        # Place keys only for doors that survived
+        surviving_doors = [
+            (dx, dy) for (dx, dy) in door_positions if self._grid[dy][dx] == self.DOOR
+        ]
+        for door_x, door_y in surviving_doors:
+            reachable = self._bfs_reachable(ax, ay)
+            key_candidates = [
+                (x, y)
+                for (x, y) in reachable
+                if self._grid[y][x] == self.FLOOR and (x, y) != (ax, ay) and (x, y) != (gx, gy)
+            ]
+            if key_candidates:
+                kx, ky = key_candidates[int(rng.integers(len(key_candidates)))]
+                self._grid[ky][kx] = self.KEY
+
+        # Add 3-7 lava cells as a patch near the goal
+        num_lava = int(rng.integers(3, 8))
+        cells = [(gx, gy)]
+        for _ in range(num_lava):
+            cx, cy = cells[-1]
+            dx, dy = [(0, 1), (0, -1), (1, 0), (-1, 0)][int(rng.integers(4))]
+            nx, ny = cx + dx, cy + dy
+            if 1 <= nx < w - 1 and 1 <= ny < h - 1:
+                cells.append((nx, ny))
+        # Place lava (skip goal cell and agent cell)
+        for cx, cy in cells:
+            if (cx, cy) != (gx, gy) and (cx, cy) != (ax, ay) and self._grid[cy][cx] == self.FLOOR:
+                self._grid[cy][cx] = self.LAVA
+
+        # Verify solvability, remove lava if blocked
+        for _ in range(20):
+            if self._bfs_distance_safe(ax, ay, gx, gy) is not None:
+                break
+            lava_cells = [
+                (x, y)
+                for y in range(1, h - 1)
+                for x in range(1, w - 1)
+                if self._grid[y][x] == self.LAVA
+            ]
+            if not lava_cells:
+                break
+            rx, ry = lava_cells[int(rng.integers(len(lava_cells)))]
+            self._grid[ry][rx] = self.FLOOR
+
+    def _bfs_reachable(self, sx: int, sy: int) -> set[tuple[int, int]]:
+        """BFS to find all floor cells reachable from (sx, sy), not crossing walls/doors."""
+        from collections import deque
+
+        reachable = {(sx, sy)}
+        queue = deque([(sx, sy)])
+        while queue:
+            cx, cy = queue.popleft()
+            for dx, dy in ((0, -1), (0, 1), (-1, 0), (1, 0)):
+                nx, ny = cx + dx, cy + dy
+                if not (0 <= nx < self._width and 0 <= ny < self._height):
+                    continue
+                if (nx, ny) in reachable:
+                    continue
+                cell = self._grid[ny][nx]
+                if cell == self.WALL or cell == self.DOOR:
+                    continue
+                reachable.add((nx, ny))
+                queue.append((nx, ny))
+        return reachable
 
     def _bfs_distance(self, sx: int, sy: int, tx: int, ty: int) -> float | None:
         """BFS distance between two points on the current grid. Doors are impassable."""
