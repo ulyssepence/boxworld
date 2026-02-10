@@ -634,18 +634,25 @@ def test_generated_maze_is_solvable():
         assert goal_dist is not None, f"Seed {seed}: goal unreachable even with key"
 
 
-def test_generated_maze_has_corridors():
-    """Generated maze should have wall cells in the interior (not just border)."""
+def test_generated_levels_have_varied_openness():
+    """Generated levels should include both low-wall and moderate-wall layouts."""
     env = BoxworldEnv()
-    env.reset(seed=42)
-    interior_walls = 0
-    for y in range(1, env._height - 1):
-        for x in range(1, env._width - 1):
-            if env._grid[y][x] == BoxworldEnv.WALL:
-                interior_walls += 1
-    # A maze should have many interior walls (open room had ~10%)
-    # Recursive backtracker on 10x10 produces ~30-40 interior walls
-    assert interior_walls > 10, f"Only {interior_walls} interior walls — not maze-like"
+    low_wall_count = 0  # ≤6 interior walls
+    moderate_wall_count = 0  # ≥15 interior walls
+    for seed in range(100):
+        env.reset(seed=seed)
+        interior_walls = sum(
+            1
+            for y in range(1, env._height - 1)
+            for x in range(1, env._width - 1)
+            if env._grid[y][x] == BoxworldEnv.WALL
+        )
+        if interior_walls <= 6:
+            low_wall_count += 1
+        if interior_walls >= 15:
+            moderate_wall_count += 1
+    assert low_wall_count >= 5, f"Only {low_wall_count}/100 had ≤6 interior walls"
+    assert moderate_wall_count >= 5, f"Only {moderate_wall_count}/100 had ≥15 interior walls"
 
 
 def test_generated_maze_minimum_distance():
@@ -721,6 +728,63 @@ def test_generated_maze_door_has_key():
         )
         if has_door:
             assert has_key, f"Seed {seed}: has door but no key"
+
+
+def test_generated_levels_have_partitions():
+    """Some levels should have rows/columns where ≥60% of cells are walls (partitions)."""
+    env = BoxworldEnv()
+    partition_count = 0
+    for seed in range(200):
+        env.reset(seed=seed)
+        has_partition = False
+        w, h = env._width, env._height
+        # Check rows
+        for y in range(1, h - 1):
+            wall_frac = sum(1 for x in range(1, w - 1) if env._grid[y][x] == BoxworldEnv.WALL) / (
+                w - 2
+            )
+            if wall_frac >= 0.6:
+                has_partition = True
+                break
+        if not has_partition:
+            # Check columns
+            for x in range(1, w - 1):
+                wall_frac = sum(
+                    1 for y in range(1, h - 1) if env._grid[y][x] == BoxworldEnv.WALL
+                ) / (h - 2)
+                if wall_frac >= 0.6:
+                    has_partition = True
+                    break
+        if has_partition:
+            partition_count += 1
+    assert partition_count >= 10, f"Only {partition_count}/200 had wall partitions"
+
+
+def test_generated_levels_have_lava_strips():
+    """Some levels should have ≥2 adjacent lava cells (strips, not just scattered)."""
+    env = BoxworldEnv()
+    strip_count = 0
+    for seed in range(200):
+        env.reset(seed=seed)
+        has_strip = False
+        for y in range(env._height):
+            for x in range(env._width):
+                if env._grid[y][x] != BoxworldEnv.LAVA:
+                    continue
+                # Check if any neighbor is also lava
+                for dx, dy in ((0, 1), (1, 0)):
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx < env._width and 0 <= ny < env._height:
+                        if env._grid[ny][nx] == BoxworldEnv.LAVA:
+                            has_strip = True
+                            break
+                if has_strip:
+                    break
+            if has_strip:
+                break
+        if has_strip:
+            strip_count += 1
+    assert strip_count >= 5, f"Only {strip_count}/200 had lava strips"
 
 
 def _find_cell(env: BoxworldEnv, cell_type: int) -> tuple[int, int]:
@@ -875,6 +939,7 @@ def test_weighted_level_sampling():
         "three_keys": 0.0,
         "zigzag_lava": 0.0,
         "dead_ends": 0.0,
+        "key_lava_gauntlet": 0.0,
     }
     env = BoxworldEnv(
         levels_dir=levels_dir,
@@ -966,3 +1031,36 @@ def test_open_shortcut_no_doors_needed():
     env = _load_level_env("open_shortcut")
     types = [sg[0] for sg in env._subgoals]
     assert types == ["goal"], "Should reach goal directly via shortcut"
+
+
+# ---------------------------------------------------------------------------
+# exclude_levels tests
+# ---------------------------------------------------------------------------
+
+
+def test_exclude_levels_filters_correctly():
+    """exclude_levels should remove specified levels from _designed_levels."""
+    # Create two temporary level files
+    level_a = "####\n#AG#\n#  #\n####\n"
+    level_b = "####\n#A #\n# G#\n####\n"
+    with tempfile.TemporaryDirectory() as tmpdir:
+        with open(os.path.join(tmpdir, "level_a.txt"), "w") as f:
+            f.write(level_a)
+        with open(os.path.join(tmpdir, "level_b.txt"), "w") as f:
+            f.write(level_b)
+
+        # Without exclusion: both loaded
+        env = BoxworldEnv(width=4, height=4, levels_dir=tmpdir, designed_level_prob=1.0)
+        ids = {lv["id"] for lv in env._designed_levels}
+        assert ids == {"level_a", "level_b"}
+
+        # With exclusion: only level_a loaded
+        env2 = BoxworldEnv(
+            width=4,
+            height=4,
+            levels_dir=tmpdir,
+            designed_level_prob=1.0,
+            exclude_levels=["level_b"],
+        )
+        ids2 = {lv["id"] for lv in env2._designed_levels}
+        assert ids2 == {"level_a"}
