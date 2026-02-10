@@ -213,3 +213,80 @@ button:disabled:not(.tab) {
     font-size: 11px;
     color: #888;
 }
+
+/* About button */
+.about-btn {
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    font-size: 13px;
+    font-weight: bold;
+    line-height: 1;
+    min-width: 24px;
+    border-radius: 50%;
+    color: #888;
+    border-color: #555;
+}
+
+.about-btn:hover:not(:disabled) {
+    color: #00FFFF;
+}
+
+/* About overlay */
+.about-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.about-panel {
+    position: relative;
+    max-width: 600px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+    background: rgba(10, 10, 30, 0.95);
+    backdrop-filter: blur(12px);
+    border-radius: 10px;
+    padding: 32px;
+    color: #ccc;
+}
+
+.about-panel h2 {
+    color: #00FFFF;
+    font-size: 20px;
+    margin-bottom: 16px;
+}
+
+.about-panel p {
+    font-size: 14px;
+    line-height: 1.7;
+    margin-bottom: 12px;
+}
+
+.about-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    background: transparent;
+    border: none;
+    color: #888;
+    font-size: 22px;
+    cursor: pointer;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    line-height: 1;
+}
+
+.about-close:hover {
+    color: #e0e0e0;
+}
+
+a {
+    color: #00FFFF;
+}
