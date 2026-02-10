@@ -4,6 +4,7 @@ import * as api from './api'
 import * as util from './util'
 import * as render from './render'
 import * as ml from './ml'
+import * as play from './play'
 import * as t from './types'
 
 function cycleCellType(currentCell: t.CellType): t.CellType {
@@ -485,6 +486,15 @@ function Overlay() {
         </select>
         {state.currentLevel && (
           <>
+            <button
+              onClick={() => {
+                const seed = Math.floor(Math.random() * 1000000)
+                const level = play.generateLevel(seed)
+                dispatch({ type: 'GENERATE_LEVEL', level })
+              }}
+            >
+              Generate
+            </button>
             <button
               onClick={() => {
                 dispatch({ type: 'TOGGLE_EDIT_MODE' })
