@@ -353,9 +353,56 @@ function InferenceTab({
   )
 }
 
+function AboutOverlay({ onClose }: { onClose: () => void }) {
+  return (
+    <div className="about-overlay" onClick={onClose}>
+      <div className="about-panel" onClick={(e) => e.stopPropagation()}>
+        <button className="about-close" onClick={onClose}>
+          &times;
+        </button>
+        <h2>
+          Boxworld (
+          <a target="_blank" href="https://github.com/ulyssepence/boxworld">
+            source
+          </a>
+          )
+        </h2>
+        <p>
+          An AI agent has learned to navigate grid-based world with walls, doors, keys, lava, and
+          goals. Trained with the Reinforcement Learning using{' '}
+          <a target="_blank" href="https://en.wikipedia.org/wiki/Proximal_policy_optimization">
+            PPO (Proximal Policy Optimization)
+          </a>{' '}
+          and{' '}
+          <a target="_blank" href="https://stable-baselines3.readthedocs.io/en/master/">
+            Stable-Baselines3
+          </a>
+          .
+        </p>
+        <p>
+          Use the <strong>Recordings</strong> tab to play back recordings of the agent after
+          differing number of steps/iterations of the training. Watch it stumbling around in the
+          environment and slowly figuring out how to take actions that lead to better{' '}
+          <strong>rewards</strong>.
+        </p>
+        <p>
+          Use the <strong>Live</strong> tab to run the agent live in your browser after it's gone
+          through different amounts of training steps. Edit the level to see how they overcome (or
+          often don't) new patterns in the environment. The live <strong>inference</strong> runs the{' '}
+          <a target="_blank" href="https://en.wikipedia.org/wiki/Open_Neural_Network_Exchange">
+            ONNX
+          </a>{' '}
+          in the 3D environment created with React Three Fiber.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function Overlay() {
   const [state, dispatch] = util.useApp()
   const { agentRef, stepOnce } = util.useLiveInference()
+  const [showAbout, setShowAbout] = React.useState(false)
 
   const li = state.liveInference
 
@@ -417,6 +464,9 @@ function Overlay() {
       {/* Top overlay — single horizontal bar */}
       <div className="overlay-top">
         <span className="title">Boxworld</span>
+        <button className="about-btn" onClick={() => setShowAbout(true)}>
+          ?
+        </button>
         <select
           className="overlay-select"
           onChange={handleLevelChange}
@@ -501,6 +551,7 @@ function Overlay() {
           </>
         )}
       </div>
+      {showAbout && <AboutOverlay onClose={() => setShowAbout(false)} />}
     </>
   )
 }
