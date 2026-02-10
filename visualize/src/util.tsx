@@ -76,6 +76,7 @@ export type AppAction =
   | { type: 'STOP_LIVE_INFERENCE' }
   | { type: 'SET_VIEW_MODE'; mode: ViewMode }
   | { type: 'RESTART_LIVE_INFERENCE' }
+  | { type: 'GENERATE_LEVEL'; level: t.Level }
 
 const initialState: AppState = {
   levels: [],
@@ -321,6 +322,24 @@ function reducer(state: AppState, action: AppAction): AppState {
         },
       }
     }
+
+    case 'GENERATE_LEVEL':
+      return {
+        ...state,
+        currentLevel: action.level,
+        originalLevel: {
+          ...action.level,
+          grid: action.level.grid.map((row) => [...row]),
+        },
+        episodes: [],
+        currentEpisodeIndex: 0,
+        currentStep: 0,
+        isPlaying: false,
+        editMode: false,
+        liveInference: initialLiveInference,
+        viewMode: 'inference',
+        editVersion: 0,
+      }
 
     default:
       return state
