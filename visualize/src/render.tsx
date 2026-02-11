@@ -24,7 +24,7 @@ const WallMaterial = (
   <material.CustomMaterial
     vertexShader={`
       if (0.0 < worldPosition.y) {
-        position += sin(position.x * 6.0 + position.z * 3.0 + t / 3.0 * TAU) * 0.07;
+        position += sin(worldPosition.x * 6.0 + worldPosition.y * 3.0 + t / 3.0 * TAU) * 0.07;
         position += sin(t / 6.0 * TAU) * normalize(worldPosition - meshOrigin) * 0.02;
       }
     `}
@@ -39,6 +39,9 @@ const LavaColor1 = 'vec3(1.0, 0.3, 0.0)'
 const LavaColor2 = 'vec3(1.0, 0.7, 0.0)'
 const LavaMaterial = (
   <material.CustomMaterial
+    vertexShader={`
+      position.z += sin(random(worldPosition.xy) * TAU + t / 4.0 * TAU) * 0.02;
+    `}
     fragmentShader={`
       float mask = float(perlin_noise(worldPosition.xz * 3.0 + t / 4.0) < 0.5);
       color = lit(
@@ -57,19 +60,17 @@ const LavaMaterial = (
 const FloorMaterial = (
   <material.CustomMaterial
     vertexShader={`
-      position.y += sin(position.z * 6.0 + position.x * 6.0 + t * TAU) * 0.02;
+      position.z += sin(random(worldPosition.xy) * TAU + t / 4.0 * TAU) * 0.02;
     `}
     fragmentShader={`
-      float mask = float(perlin_noise(worldPosition.xz * 3.0) < 0.5);
-      color = lit(
-        mix(
-          ${LavaColor1},
-          ${LavaColor2},
-          mask
-        ),
-        normal
+      float buffer = 0.01;
+      float visible = float(
+        buffer < uv.x && uv.x < one_minus(buffer) &&
+        buffer < uv.y && uv.y < one_minus(buffer)
       );
-      alpha = 1.0;
+
+      color = lit(vec3(0.2), normal);
+      alpha = visible;
     `}
   />
 )
@@ -123,7 +124,7 @@ export function Grid({
     for (let y = 0; y < level.height; y++) {
       for (let x = 0; x < level.width; x++) {
         const cell = level.grid[y][x]
-        if (cell !== t.CellType.Wall) {
+        if (cell !== t.CellType.Wall && cell !== t.CellType.Lava) {
           result.push({ x, y, color: cellColor(cell) })
         }
       }
@@ -148,7 +149,7 @@ export function Grid({
           }
         >
           <planeGeometry args={[1, 1]} />
-          <meshStandardMaterial color={tile.color} />
+          {FloorMaterial}
         </mesh>
       ))}
     </group>
@@ -166,12 +167,16 @@ export function Walls({
   const wk = gridKey(level.grid)
   const walls = React.useMemo(() => play.getWallPositions(level), [wk])
 
+  const w = level.grid.length
+  const h = level.grid[0].length
+  const isEdge = (x: number, y: number) => x === 0 || x === w - 1 || y === 0 || y === h - 1
+
   return (
     <group>
       {walls.map(([x, y]) => (
         <mesh
           key={`${x},${y}`}
-          position={[x, 0.5, y]}
+          position={[x, isEdge(x, y) ? 0.5 : 0.25, y]}
           onClick={
             onCellClick
               ? (e) => {
@@ -181,7 +186,7 @@ export function Walls({
               : undefined
           }
         >
-          <boxGeometry args={[1, 1, 1]} />
+          <boxGeometry args={[0.9, isEdge(x, y) ? 1 : 0.5, 0.9]} />
           {WallMaterial}
         </mesh>
       ))}
@@ -345,12 +350,15 @@ export function Agent({
   position,
   prevPosition,
   stepsPerSecond = 4,
+  children,
 }: {
   position: [number, number]
   prevPosition?: [number, number]
   stepsPerSecond?: number
+  children?: React.ReactNode
 }) {
   const groupRef = React.useRef<THREE.Group>(null!)
+  const modelRef = React.useRef<THREE.Group>(null!)
   const { scene } = Drei.useGLTF('/static/models/player.glb')
   const clonedScene = React.useMemo(() => scene.clone(), [scene])
   const startPos = React.useRef<THREE.Vector3>(new THREE.Vector3(position[0], 0, position[1]))
@@ -377,7 +385,7 @@ export function Agent({
 
   const agentMat = material.useCustomMaterial({
     fragmentShader: `
-      color = lit(vec3(0.8, 0.5, 0.8), normal);
+      color = lit(vec3(0.7, 0.1, 0.7), normal);
       alpha = 1.0;
     `,
   })
@@ -389,28 +397,26 @@ export function Agent({
   Fiber.useFrame((_, delta) => {
     if (!groupRef.current) return
     if (progress.current < 1) {
-      // Lerp completes in exactly 1/stepsPerSecond seconds
       progress.current = Math.min(1, progress.current + delta * stepsPerSecond)
       groupRef.current.position.lerpVectors(startPos.current, targetPos.current, progress.current)
     }
-    groupRef.current.rotation.y = facingAngle.current
+    if (modelRef.current) {
+      modelRef.current.rotation.y = facingAngle.current
+    }
   })
 
   return (
     <group ref={groupRef} position={[position[0], 0, position[1]]}>
-      <primitive object={clonedScene} />
+      <group ref={modelRef}>
+        <primitive object={clonedScene} />
+      </group>
+      {children}
     </group>
   )
 }
 
 /** Q-value direction arrows overlay */
-export function QValueArrows({
-  qValues,
-  position,
-}: {
-  qValues?: t.QValues
-  position: [number, number]
-}) {
+export function QValueArrows({ qValues }: { qValues?: t.QValues }) {
   if (!qValues) return null
 
   const directions: { action: t.Action; dx: number; dz: number; rotation: number }[] = [
@@ -427,7 +433,7 @@ export function QValueArrows({
   const range = maxQ - minQ || 1
 
   return (
-    <group position={[position[0], 0.02, position[1]]}>
+    <group position={[0, 0.02, 0]}>
       {directions.map((dir) => {
         const normalized = (qValues[dir.action] - minQ) / range
         return (

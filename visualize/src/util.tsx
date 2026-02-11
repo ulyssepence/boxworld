@@ -294,14 +294,15 @@ function reducer(state: AppState, action: AppAction): AppState {
       }
 
     case 'SET_VIEW_MODE': {
-      if (action.mode === 'recordings' && state.liveInference.active) {
+      if (action.mode === 'recordings') {
         return {
           ...state,
           viewMode: 'recordings',
-          liveInference: initialLiveInference,
+          isPlaying: true,
+          currentStep: 0,
         }
       }
-      return { ...state, viewMode: action.mode }
+      return { ...state, viewMode: action.mode, isPlaying: false }
     }
 
     case 'RESTART_LIVE_INFERENCE': {
@@ -323,7 +324,9 @@ function reducer(state: AppState, action: AppAction): AppState {
       }
     }
 
-    case 'GENERATE_LEVEL':
+    case 'GENERATE_LEVEL': {
+      const freshState = play.createInitialState(action.level)
+      const keepLive = state.liveInference.active
       return {
         ...state,
         currentLevel: action.level,
@@ -336,10 +339,23 @@ function reducer(state: AppState, action: AppAction): AppState {
         currentStep: 0,
         isPlaying: false,
         editMode: false,
-        liveInference: initialLiveInference,
+        liveInference: keepLive
+          ? {
+              ...state.liveInference,
+              running: true,
+              gameState: freshState,
+              prevAgentPosition: null,
+              lastAction: null,
+              lastQValues: null,
+              stepCount: 0,
+              history: [],
+              generation: state.liveInference.generation + 1,
+            }
+          : initialLiveInference,
         viewMode: 'inference',
         editVersion: 0,
       }
+    }
 
     default:
       return state

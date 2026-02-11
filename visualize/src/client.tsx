@@ -35,7 +35,7 @@ function GameView() {
 
   const li = state.liveInference
 
-  if (li.active || state.viewMode === 'inference') {
+  if (state.viewMode === 'inference') {
     // Inference mode: display currentLevel (shared mutable grid), agent from gameState
     const agentPos: [number, number] = li.gameState ? li.gameState.agentPosition : level.agentStart
     const prevAgentPos = li.prevAgentPosition ?? undefined
@@ -54,8 +54,9 @@ function GameView() {
           position={agentPos}
           prevPosition={prevAgentPos}
           stepsPerSecond={state.playbackSpeed}
-        />
-        <render.QValueArrows qValues={li.lastQValues ?? undefined} position={agentPos} />
+        >
+          <render.QValueArrows qValues={li.lastQValues ?? undefined} />
+        </render.Agent>
       </>
     )
   }
@@ -95,8 +96,9 @@ function GameView() {
         position={agentPos}
         prevPosition={prevAgentPos}
         stepsPerSecond={state.playbackSpeed}
-      />
-      <render.QValueArrows qValues={currentStepData?.qValues} position={agentPos} />
+      >
+        <render.QValueArrows qValues={currentStepData?.qValues} />
+      </render.Agent>
     </>
   )
 }
@@ -512,13 +514,19 @@ function Overlay() {
             <div className="tab-strip">
               <button
                 className={`tab ${state.viewMode === 'recordings' ? 'tab-active' : ''}`}
-                onClick={() => dispatch({ type: 'SET_VIEW_MODE', mode: 'recordings' })}
+                onClick={(e) => {
+                  dispatch({ type: 'SET_VIEW_MODE', mode: 'recordings' })
+                  ;(e.currentTarget as HTMLElement).blur()
+                }}
               >
                 Recordings
               </button>
               <button
                 className={`tab ${state.viewMode === 'inference' ? 'tab-active' : ''}`}
-                onClick={() => dispatch({ type: 'SET_VIEW_MODE', mode: 'inference' })}
+                onClick={(e) => {
+                  dispatch({ type: 'SET_VIEW_MODE', mode: 'inference' })
+                  ;(e.currentTarget as HTMLElement).blur()
+                }}
               >
                 Live
               </button>
