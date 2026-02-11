@@ -36,6 +36,10 @@ app.get('/api/levels/:levelId', (req, res) => {
   res.json(result)
 })
 
+app.get('/api/curated-seeds', (_req, res) => {
+  res.json({ seeds: database.getCuratedSeeds() })
+})
+
 // Serve ONNX checkpoint files
 app.use(
   '/checkpoints',

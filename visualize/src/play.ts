@@ -1156,13 +1156,13 @@ function tryGenerateLevel(seed: number, fallback = false): t.Level | null {
 
   const roll = rng()
   let agentPos: [number, number] | null
-  // Weights tuned for agent success: favor room_partition (94%), bsp_rooms (90%), open_room (88%)
-  if (roll < 0.15) agentPos = genOpenRoom(grid, rng)
-  else if (roll < 0.4) agentPos = genRoomPartition(grid, rng)
-  else if (roll < 0.45) agentPos = genLavaField(grid, rng)
-  else if (roll < 0.55) agentPos = genWallSegments(grid, rng)
+  // Weights match Python training (environment.py:448-461)
+  if (roll < 0.08) agentPos = genOpenRoom(grid, rng)
+  else if (roll < 0.22) agentPos = genRoomPartition(grid, rng)
+  else if (roll < 0.36) agentPos = genLavaField(grid, rng)
+  else if (roll < 0.48) agentPos = genWallSegments(grid, rng)
   else if (roll < 0.6) agentPos = genHybrid(grid, rng)
-  else if (roll < 0.85) agentPos = genBspRooms(grid, rng)
+  else if (roll < 0.8) agentPos = genBspRooms(grid, rng)
   else agentPos = genScatteredWalls(grid, rng)
 
   if (!agentPos) return null

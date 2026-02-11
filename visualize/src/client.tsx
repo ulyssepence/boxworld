@@ -440,6 +440,9 @@ function Overlay() {
     api.fetchCheckpoints().then((checkpoints) => {
       dispatch({ type: 'LOAD_CHECKPOINTS', checkpoints })
     })
+    api.fetchCuratedSeeds().then((seeds) => {
+      dispatch({ type: 'LOAD_CURATED_SEEDS', seeds })
+    })
   }, [dispatch])
 
   const handleLevelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -490,9 +493,12 @@ function Overlay() {
           <>
             <button
               onClick={() => {
-                const seed = Math.floor(Math.random() * 1000000)
+                const curated = state.curatedSeeds.length > 0
+                const seed = curated
+                  ? state.curatedSeeds[Math.floor(Math.random() * state.curatedSeeds.length)]
+                  : Math.floor(Math.random() * 1000000)
                 const level = play.generateLevel(seed)
-                dispatch({ type: 'GENERATE_LEVEL', level })
+                dispatch({ type: 'GENERATE_LEVEL', level, deterministic: curated })
               }}
             >
               Generate

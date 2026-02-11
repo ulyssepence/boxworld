@@ -57,6 +57,9 @@ class Recorder:
                 training_steps INTEGER NOT NULL,
                 onnx_path TEXT
             );
+            CREATE TABLE IF NOT EXISTS curated_seeds (
+                seed INTEGER PRIMARY KEY
+            );
             """
         )
         self.conn.commit()

@@ -74,8 +74,14 @@ def cmd_export(args):
         exporter.close()
 
 
+def cmd_curate(args):
+    from curate import cmd_curate as _cmd_curate
+
+    _cmd_curate(args)
+
+
 def cmd_all(args):
-    """Run the full pipeline: train -> export -> record."""
+    """Run the full pipeline: train -> export -> curate -> record."""
     import os
 
     # Ensure output_dir falls back to checkpoint_dir if not explicitly set
@@ -85,6 +91,14 @@ def cmd_all(args):
     # Record from all checkpoints (db.ts picks evenly spaced episodes at query time)
     if args.min_steps is None:
         args.min_steps = 0
+
+    # Default curate args if not set
+    if not hasattr(args, "start_seed"):
+        args.start_seed = 0
+    if not hasattr(args, "num_seeds"):
+        args.num_seeds = 10000
+    if not hasattr(args, "max_tries"):
+        args.max_tries = 3
 
     # Clear database so we start fresh
     for suffix in ("", "-shm", "-wal"):
@@ -103,7 +117,9 @@ def cmd_all(args):
     cmd_train(args)
     print("=== Step 2: Exporting to ONNX ===")
     cmd_export(args)
-    print("=== Step 3: Recording episodes ===")
+    print("=== Step 3: Curating seeds ===")
+    cmd_curate(args)
+    print("=== Step 4: Recording episodes ===")
     cmd_record(args)
     print("=== Pipeline complete ===")
 
@@ -138,7 +154,20 @@ def main():
     export_parser.add_argument("--db", default="../data/db.sqlite")
     export_parser.set_defaults(func=cmd_export)
 
-    all_parser = subparsers.add_parser("all", help="Run full pipeline: train -> export -> record")
+    curate_parser = subparsers.add_parser(
+        "curate", help="Curate seed pool for frontend level generation"
+    )
+    curate_parser.add_argument("--checkpoint-dir", default="../data/checkpoints")
+    curate_parser.add_argument("--checkpoint", default=None, help="Specific checkpoint path")
+    curate_parser.add_argument("--db", default="../data/db.sqlite")
+    curate_parser.add_argument("--start-seed", type=int, default=0)
+    curate_parser.add_argument("--num-seeds", type=int, default=10000)
+    curate_parser.add_argument("--max-tries", type=int, default=3)
+    curate_parser.set_defaults(func=cmd_curate)
+
+    all_parser = subparsers.add_parser(
+        "all", help="Run full pipeline: train -> export -> curate -> record"
+    )
     all_parser.add_argument("--steps", type=int, default=20_000_000)
     all_parser.add_argument("--interval", type=int, default=50_000)
     all_parser.add_argument("--checkpoint-dir", default="../data/checkpoints")
@@ -152,6 +181,7 @@ def main():
         default=None,
         help="Only record from checkpoints with at least this many training steps (default: all)",
     )
+    all_parser.add_argument("--num-seeds", type=int, default=10000)
     all_parser.set_defaults(func=cmd_all)
 
     args = parser.parse_args()

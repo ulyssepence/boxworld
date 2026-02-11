@@ -13,6 +13,7 @@ export interface LiveInferenceState {
   stepCount: number
   history: t.Step[]
   generation: number
+  deterministic: boolean
 }
 
 const initialLiveInference: LiveInferenceState = {
@@ -25,6 +26,7 @@ const initialLiveInference: LiveInferenceState = {
   stepCount: 0,
   history: [],
   generation: 0,
+  deterministic: false,
 }
 
 export type ViewMode = 'recordings' | 'inference'
@@ -44,6 +46,7 @@ export interface AppState {
   liveInference: LiveInferenceState
   viewMode: ViewMode
   editVersion: number
+  curatedSeeds: number[]
 }
 
 export type AppAction =
@@ -76,7 +79,8 @@ export type AppAction =
   | { type: 'STOP_LIVE_INFERENCE' }
   | { type: 'SET_VIEW_MODE'; mode: ViewMode }
   | { type: 'RESTART_LIVE_INFERENCE' }
-  | { type: 'GENERATE_LEVEL'; level: t.Level }
+  | { type: 'GENERATE_LEVEL'; level: t.Level; deterministic?: boolean }
+  | { type: 'LOAD_CURATED_SEEDS'; seeds: number[] }
 
 const initialState: AppState = {
   levels: [],
@@ -93,6 +97,7 @@ const initialState: AppState = {
   liveInference: initialLiveInference,
   viewMode: 'recordings',
   editVersion: 0,
+  curatedSeeds: [],
 }
 
 function getMaxStep(state: AppState): number {
@@ -320,6 +325,7 @@ function reducer(state: AppState, action: AppAction): AppState {
           stepCount: 0,
           history: [],
           generation: state.liveInference.generation + 1,
+          deterministic: false,
         },
       }
     }
@@ -327,6 +333,7 @@ function reducer(state: AppState, action: AppAction): AppState {
     case 'GENERATE_LEVEL': {
       const freshState = play.createInitialState(action.level)
       const keepLive = state.liveInference.active
+      const det = action.deterministic ?? false
       return {
         ...state,
         currentLevel: action.level,
@@ -350,12 +357,16 @@ function reducer(state: AppState, action: AppAction): AppState {
               stepCount: 0,
               history: [],
               generation: state.liveInference.generation + 1,
+              deterministic: det,
             }
-          : initialLiveInference,
+          : { ...initialLiveInference, deterministic: det },
         viewMode: 'inference',
         editVersion: 0,
       }
     }
+
+    case 'LOAD_CURATED_SEEDS':
+      return { ...state, curatedSeeds: action.seeds }
 
     default:
       return state
@@ -429,7 +440,7 @@ export function useLiveInference() {
       }
       const preStepGrid = s.currentLevel.grid
       const gen = s.liveInference.generation
-      const { action, qValues } = await agent.selectAction(merged)
+      const { action, qValues } = await agent.selectAction(merged, s.liveInference.deterministic)
       const newState = play.step(merged, action)
       dispatch({ type: 'LIVE_STEP', action, qValues, newState, preStepGrid, generation: gen })
       if (newState.done || s.liveInference.stepCount + 1 >= 200) {

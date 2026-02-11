@@ -42,6 +42,9 @@ export class DB {
         training_steps INTEGER NOT NULL,
         onnx_path TEXT
       );
+      CREATE TABLE IF NOT EXISTS curated_seeds (
+        seed INTEGER PRIMARY KEY
+      );
     `)
   }
 
@@ -128,5 +131,12 @@ export class DB {
     })
 
     return { level, episodes }
+  }
+
+  getCuratedSeeds(): number[] {
+    const rows = this.db.prepare('SELECT seed FROM curated_seeds ORDER BY seed').all() as {
+      seed: number
+    }[]
+    return rows.map((r) => r.seed)
   }
 }

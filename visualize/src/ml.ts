@@ -104,8 +104,23 @@ export class Agent {
    * Get Q-values and select action via softmax sampling.
    * Softmax avoids deterministic loops that kill argmax performance.
    */
-  async selectAction(state: t.GameState): Promise<{ action: t.Action; qValues: t.QValues }> {
+  async selectAction(
+    state: t.GameState,
+    deterministic: boolean = false,
+  ): Promise<{ action: t.Action; qValues: t.QValues }> {
     const qValues = await this.getQValues(state)
+
+    if (deterministic) {
+      let bestAction = t.Action.Up
+      let bestValue = -Infinity
+      for (let a = 0; a <= 5; a++) {
+        if (qValues[a as t.Action] > bestValue) {
+          bestValue = qValues[a as t.Action]
+          bestAction = a as t.Action
+        }
+      }
+      return { action: bestAction, qValues }
+    }
 
     // Softmax: exp(logit) / sum(exp(logit)), with max subtraction for numerical stability
     const logits: number[] = []
