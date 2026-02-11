@@ -4,11 +4,54 @@ import os
 from dataclasses import dataclass
 from typing import Callable
 
+import gymnasium
+import torch
+import torch.nn as nn
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import CallbackList, CheckpointCallback
 from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 
 from environment import BoxworldEnv
+
+
+class GridCNNExtractor(BaseFeaturesExtractor):
+    """Reshapes flat obs into spatial grid and processes with CNN.
+
+    One-hot encodes cell types (6 channels), applies 2 conv layers,
+    global avg pool, then concat with (agent_x, agent_y, has_key).
+    """
+
+    def __init__(self, observation_space: gymnasium.spaces.Box, grid_w: int = 10, grid_h: int = 10):
+        features_dim = 128
+        super().__init__(observation_space, features_dim)
+        self.grid_w = grid_w
+        self.grid_h = grid_h
+        n_cell_types = 6
+
+        self.conv = nn.Sequential(
+            nn.Conv2d(n_cell_types, 32, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.ReLU(),
+            nn.AdaptiveAvgPool2d(1),
+        )
+        self.fc = nn.Sequential(
+            nn.Linear(64 + 3, features_dim),
+            nn.ReLU(),
+        )
+
+    def forward(self, observations: torch.Tensor) -> torch.Tensor:
+        batch = observations.shape[0]
+        grid_flat = observations[:, : self.grid_w * self.grid_h].long().clamp(0, 5)
+        extra = observations[:, self.grid_w * self.grid_h :]
+
+        one_hot = torch.zeros(batch, 6, self.grid_w * self.grid_h, device=observations.device)
+        one_hot.scatter_(1, grid_flat.unsqueeze(1), 1.0)
+        one_hot = one_hot.view(batch, 6, self.grid_h, self.grid_w)
+
+        conv_out = self.conv(one_hot).view(batch, -1)
+        return self.fc(torch.cat([conv_out, extra], dim=1))
 
 
 @dataclass
@@ -24,6 +67,7 @@ class TrainerConfig:
     vf_coef: float = 0.5
     max_grad_norm: float = 0.5
     n_envs: int = 8
+    use_cnn: bool = False
 
 
 class Trainer:
@@ -48,6 +92,15 @@ class Trainer:
             # Single env passed directly (e.g. from tests)
             self.vec_env = env_fn
 
+        if self.config.use_cnn:
+            policy_kwargs = {
+                "features_extractor_class": GridCNNExtractor,
+                "features_extractor_kwargs": {"grid_w": 10, "grid_h": 10},
+                "net_arch": dict(pi=[128], vf=[128]),
+            }
+        else:
+            policy_kwargs = {"net_arch": dict(pi=[128, 128], vf=[128, 128])}
+
         self.model = PPO(
             "MlpPolicy",
             self.vec_env,
@@ -61,21 +114,28 @@ class Trainer:
             ent_coef=self.config.ent_coef,
             vf_coef=self.config.vf_coef,
             max_grad_norm=self.config.max_grad_norm,
-            policy_kwargs={"net_arch": dict(pi=[128, 128], vf=[128, 128])},
+            policy_kwargs=policy_kwargs,
             verbose=1,
         )
 
-    def train(self, total_steps: int, checkpoint_interval: int, checkpoint_dir: str) -> None:
+    def train(
+        self,
+        total_steps: int,
+        checkpoint_interval: int,
+        checkpoint_dir: str,
+        extra_callbacks: list | None = None,
+    ) -> None:
         """Run training, saving checkpoints at regular intervals."""
         os.makedirs(checkpoint_dir, exist_ok=True)
         # PPO save_freq is per-env, so divide by n_envs for total-step intervals
         n_envs = getattr(self.vec_env, "num_envs", 1)
-        callback = CheckpointCallback(
+        checkpoint_cb = CheckpointCallback(
             save_freq=max(1, checkpoint_interval // n_envs),
             save_path=checkpoint_dir,
             name_prefix="boxworld",
         )
-        self.model.learn(total_timesteps=total_steps, callback=callback)
+        callbacks = [checkpoint_cb] + (extra_callbacks or [])
+        self.model.learn(total_timesteps=total_steps, callback=CallbackList(callbacks))
 
     def load_checkpoint(self, path: str) -> None:
         """Load a saved model checkpoint."""

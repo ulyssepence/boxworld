@@ -7,6 +7,8 @@ from train import Trainer, TrainerConfig
 
 
 def cmd_train(args):
+    from curriculum import CurriculumCallback
+
     level_weights = {
         "open_room": 1.0,
         "simple_corridor": 1.0,
@@ -21,15 +23,25 @@ def cmd_train(args):
     }
     env_kwargs = {
         "levels_dir": args.levels_dir,
-        "designed_level_prob": 0.3,
+        "designed_level_prob": 0.15,
         "level_weights": level_weights,
         "exclude_levels": ["key_lava_gauntlet"],
     }
-    trainer = Trainer(BoxworldEnv, TrainerConfig(), env_kwargs=env_kwargs)
+    config = TrainerConfig(
+        ent_coef=0.05,
+        n_steps=2048,
+        batch_size=256,
+        learning_rate=3e-4,
+        use_cnn=True,
+        n_envs=8,
+    )
+    trainer = Trainer(BoxworldEnv, config, env_kwargs=env_kwargs)
+    curriculum_cb = CurriculumCallback(total_timesteps=args.steps, ramp_fraction=0.4, verbose=1)
     trainer.train(
         total_steps=args.steps,
         checkpoint_interval=args.interval,
         checkpoint_dir=args.checkpoint_dir,
+        extra_callbacks=[curriculum_cb],
     )
 
 
@@ -101,7 +113,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     train_parser = subparsers.add_parser("train", help="Train PPO agent")
-    train_parser.add_argument("--steps", type=int, default=10_000_000)
+    train_parser.add_argument("--steps", type=int, default=20_000_000)
     train_parser.add_argument("--interval", type=int, default=50_000)
     train_parser.add_argument("--checkpoint-dir", default="../data/checkpoints")
     train_parser.add_argument("--levels-dir", default="../data/levels")
@@ -127,7 +139,7 @@ def main():
     export_parser.set_defaults(func=cmd_export)
 
     all_parser = subparsers.add_parser("all", help="Run full pipeline: train -> export -> record")
-    all_parser.add_argument("--steps", type=int, default=10_000_000)
+    all_parser.add_argument("--steps", type=int, default=20_000_000)
     all_parser.add_argument("--interval", type=int, default=50_000)
     all_parser.add_argument("--checkpoint-dir", default="../data/checkpoints")
     all_parser.add_argument("--output-dir", default=None)

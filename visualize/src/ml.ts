@@ -101,22 +101,36 @@ export class Agent {
   }
 
   /**
-   * Get Q-values and select the action with the highest Q-value (argmax).
+   * Get Q-values and select action via softmax sampling.
+   * Softmax avoids deterministic loops that kill argmax performance.
    */
   async selectAction(state: t.GameState): Promise<{ action: t.Action; qValues: t.QValues }> {
     const qValues = await this.getQValues(state)
 
-    let bestAction = t.Action.Up
-    let bestValue = -Infinity
-
+    // Softmax: exp(logit) / sum(exp(logit)), with max subtraction for numerical stability
+    const logits: number[] = []
+    let maxLogit = -Infinity
     for (let a = 0; a <= 5; a++) {
       const v = qValues[a as t.Action]
-      if (v > bestValue) {
-        bestValue = v
-        bestAction = a as t.Action
+      logits.push(v)
+      if (v > maxLogit) maxLogit = v
+    }
+    const exps = logits.map((l) => Math.exp(l - maxLogit))
+    const sumExp = exps.reduce((a, b) => a + b, 0)
+    const probs = exps.map((e) => e / sumExp)
+
+    // Sample from the distribution
+    const r = Math.random()
+    let cumulative = 0
+    let selectedAction = t.Action.Up
+    for (let a = 0; a <= 5; a++) {
+      cumulative += probs[a]
+      if (r < cumulative) {
+        selectedAction = a as t.Action
+        break
       }
     }
 
-    return { action: bestAction, qValues }
+    return { action: selectedAction, qValues }
   }
 }

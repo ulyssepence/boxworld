@@ -95,6 +95,7 @@ class BoxworldEnv(gymnasium.Env):
         self._last_direction: int = self.UP  # default facing direction
         self._subgoals: list[tuple[str, tuple[int, int]]] = []
         self._subgoal_index: int = 0
+        self._difficulty: float = 1.0  # 0.0=easy, 1.0=full difficulty (curriculum)
 
         # If level_path provided, load it to get correct dimensions for spaces
         if level_path is not None:
@@ -438,30 +439,35 @@ class BoxworldEnv(gymnasium.Env):
     def _generate_level(self, seed: int | None) -> None:
         """Generate a procedural level with varied layout styles.
 
-        Dispatches to one of 5 generators to produce layouts matching
-        the variety of user-designed levels (open rooms, partitions, lava
-        fields, wall segments, and hybrids).
+        Dispatches to one of 7 generators. BSP rooms and scattered walls
+        match the TS web UI generators so the agent generalizes to levels
+        users see in the browser.
         """
         rng = np.random.default_rng(seed)
         roll = rng.random()
-        if roll < 0.10:
+        if roll < 0.08:
             self._gen_open_room(rng)
-        elif roll < 0.30:
+        elif roll < 0.22:
             self._gen_room_partition(rng)
-        elif roll < 0.50:
+        elif roll < 0.36:
             self._gen_lava_field(rng)
-        elif roll < 0.65:
+        elif roll < 0.48:
             self._gen_wall_segments(rng)
-        else:
+        elif roll < 0.60:
             self._gen_hybrid(rng)
+        elif roll < 0.80:
+            self._gen_bsp_rooms(rng)
+        else:
+            self._gen_scattered_walls(rng)
 
     def _gen_open_room(self, rng: np.random.Generator) -> None:
         """Open room with 0-6 scattered wall cells."""
         self._init_border()
         w, h = self._width, self._height
+        d = self._difficulty
 
-        # Place 0-6 scattered single wall cells
-        num_walls = int(rng.integers(0, 7))
+        # Place 0-6 scattered single wall cells (scales with difficulty)
+        num_walls = int(rng.integers(0, max(1, int(3 + 4 * d))))
         interior = [(x, y) for y in range(1, h - 1) for x in range(1, w - 1)]
         if num_walls > 0 and interior:
             indices = rng.choice(len(interior), size=min(num_walls, len(interior)), replace=False)
@@ -471,21 +477,22 @@ class BoxworldEnv(gymnasium.Env):
 
         ax, ay, gx, gy = self._place_agent_and_goal(rng, min_dist=7)
 
-        # 40% chance door/key
+        # Door/key (scaled by difficulty)
         roll = rng.random()
-        if roll < 0.40:
+        no_door_thresh = 1.0 - 0.6 * d  # at d=0: always no doors; at d=1: 40% no doors
+        if roll < no_door_thresh:
             num_doors = 0
-        elif roll < 0.75:
+        elif roll < no_door_thresh + 0.35 * d:
             num_doors = 1
-        elif roll < 0.90:
+        elif roll < no_door_thresh + 0.5 * d:
             num_doors = 2
         else:
             num_doors = 3
         for _ in range(num_doors):
             self._add_door_and_key(rng, ax, ay, gx, gy)
 
-        # 50% chance lava
-        if rng.random() < 0.5:
+        # Lava (scaled by difficulty)
+        if rng.random() < 0.5 * d:
             self._add_lava(rng, ax, ay, gx, gy)
 
     def _gen_room_partition(self, rng: np.random.Generator) -> None:
@@ -807,6 +814,289 @@ class BoxworldEnv(gymnasium.Env):
                 break
             rx, ry = lava_cells[int(rng.integers(len(lava_cells)))]
             self._grid[ry][rx] = self.FLOOR
+
+    # --- BSP rooms generator (matches TS play.ts) ---
+
+    @staticmethod
+    def _bsp_split(
+        x: int, y: int, w: int, h: int, rng: np.random.Generator, depth: int
+    ) -> list[tuple[int, int, int, int]]:
+        """Recursive BSP split. Returns list of (x, y, w, h) rects."""
+        min_size = 3
+        if depth <= 0 or (w < min_size * 2 + 1 and h < min_size * 2 + 1):
+            return [(x, y, w, h)]
+        can_h = w >= min_size * 2 + 1
+        can_v = h >= min_size * 2 + 1
+        if not can_h and not can_v:
+            return [(x, y, w, h)]
+        split_h = can_h and (not can_v or rng.random() < 0.5)
+        if split_h:
+            s_min = x + min_size
+            s_max = x + w - min_size
+            at = s_min + int(rng.integers(0, max(1, s_max - s_min)))
+            left = BoxworldEnv._bsp_split(x, y, at - x, h, rng, depth - 1)
+            right = BoxworldEnv._bsp_split(at + 1, y, x + w - at - 1, h, rng, depth - 1)
+            return left + right
+        else:
+            s_min = y + min_size
+            s_max = y + h - min_size
+            at = s_min + int(rng.integers(0, max(1, s_max - s_min)))
+            top = BoxworldEnv._bsp_split(x, y, w, at - y, rng, depth - 1)
+            bot = BoxworldEnv._bsp_split(x, at + 1, w, y + h - at - 1, rng, depth - 1)
+            return top + bot
+
+    def _carve_corridor(self, x1: int, y1: int, x2: int, y2: int) -> None:
+        """Carve horizontal-first L-shaped corridor between two points."""
+        x, y = x1, y1
+        while x != x2:
+            if 0 <= y < self._height and 0 <= x < self._width:
+                if self._grid[y][x] == self.WALL:
+                    self._grid[y][x] = self.FLOOR
+            x += 1 if x < x2 else -1
+        while y != y2:
+            if 0 <= y < self._height and 0 <= x < self._width:
+                if self._grid[y][x] == self.WALL:
+                    self._grid[y][x] = self.FLOOR
+            y += 1 if y < y2 else -1
+        if 0 <= y < self._height and 0 <= x < self._width:
+            if self._grid[y][x] == self.WALL:
+                self._grid[y][x] = self.FLOOR
+
+    def _is_chokepoint(self, x: int, y: int) -> bool:
+        """Check if (x,y) is a corridor chokepoint: exactly 2 floor neighbors on opposite sides."""
+        if self._grid[y][x] != self.FLOOR:
+            return False
+        w, h = self._width, self._height
+
+        def passable(cx: int, cy: int) -> bool:
+            return 0 <= cx < w and 0 <= cy < h and self._grid[cy][cx] != self.WALL
+
+        horiz = (
+            passable(x - 1, y)
+            and passable(x + 1, y)
+            and not passable(x, y - 1)
+            and not passable(x, y + 1)
+        )
+        vert = (
+            not passable(x - 1, y)
+            and not passable(x + 1, y)
+            and passable(x, y - 1)
+            and passable(x, y + 1)
+        )
+        return horiz or vert
+
+    def _get_floor_cells(self) -> list[tuple[int, int]]:
+        """Get all interior floor cells."""
+        return [
+            (x, y)
+            for y in range(1, self._height - 1)
+            for x in range(1, self._width - 1)
+            if self._grid[y][x] == self.FLOOR
+        ]
+
+    def _gen_bsp_rooms(self, rng: np.random.Generator) -> None:
+        """BSP room-corridor layout matching TS generateLevel (useRooms=true branch)."""
+        w, h = self._width, self._height
+        d = self._difficulty
+        # Start with all walls + border
+        self._grid = [[self.WALL for _ in range(w)] for _ in range(h)]
+
+        # BSP split interior — fewer splits at low difficulty
+        max_depth = 1 if d < 0.3 else 2
+        rooms = self._bsp_split(1, 1, w - 2, h - 2, rng, max_depth)
+
+        # Carve rooms
+        for rx, ry, rw, rh in rooms:
+            for cy in range(ry, ry + rh):
+                for cx in range(rx, rx + rw):
+                    if 0 < cy < h - 1 and 0 < cx < w - 1:
+                        self._grid[cy][cx] = self.FLOOR
+
+        # Connect rooms with corridors
+        for i in range(len(rooms) - 1):
+            ax, ay, aw, ah = rooms[i]
+            bx, by, bw, bh = rooms[i + 1]
+            self._carve_corridor(ax + aw // 2, ay + ah // 2, bx + bw // 2, by + bh // 2)
+
+        floors = self._get_floor_cells()
+        if len(floors) < 8:
+            # Fallback to open room
+            self._gen_open_room(rng)
+            return
+
+        # Place agent and goal with max BFS distance (sample pairs like TS)
+        best_dist = -1
+        agent_pos = floors[0]
+        goal_pos = floors[-1]
+        pair_tries = min(20, len(floors) * 2)
+        for _ in range(pair_tries):
+            a = floors[int(rng.integers(len(floors)))]
+            b = floors[int(rng.integers(len(floors)))]
+            if a == b:
+                continue
+            d = self._bfs_distance(a[0], a[1], b[0], b[1])
+            if d is not None and d > best_dist:
+                best_dist = d
+                agent_pos = a
+                goal_pos = b
+
+        self._agent_pos = list(agent_pos)
+        self._grid[goal_pos[1]][goal_pos[0]] = self.GOAL
+        ax, ay = agent_pos
+        gx, gy = goal_pos
+
+        # Door on chokepoint (probability scales with difficulty)
+        if rng.random() < 0.5 * d:
+            chokepoints = [
+                (x, y)
+                for x, y in floors
+                if self._is_chokepoint(x, y) and (x, y) != agent_pos and (x, y) != goal_pos
+            ]
+            if chokepoints:
+                door_cell = chokepoints[int(rng.integers(len(chokepoints)))]
+                self._grid[door_cell[1]][door_cell[0]] = self.DOOR
+                # Place key in agent's reachable area
+                reachable = [
+                    (x, y)
+                    for x, y in self._get_floor_cells()
+                    if (x, y) != agent_pos
+                    and (x, y) != goal_pos
+                    and self._bfs_distance(ax, ay, x, y) is not None
+                ]
+                if reachable:
+                    key_cell = reachable[int(rng.integers(len(reachable)))]
+                    self._grid[key_cell[1]][key_cell[0]] = self.KEY
+                else:
+                    self._grid[door_cell[1]][door_cell[0]] = self.FLOOR
+
+        # Lava (probability scales with difficulty)
+        if rng.random() < 0.6 * d:
+            lava_count = 2 + int(rng.integers(4))
+            placed = 0
+            for _ in range(lava_count * 5):
+                if placed >= lava_count:
+                    break
+                candidates = [
+                    (x, y)
+                    for x, y in self._get_floor_cells()
+                    if (x, y) != agent_pos and (x, y) != goal_pos
+                ]
+                if not candidates:
+                    break
+                cell = candidates[int(rng.integers(len(candidates)))]
+                self._grid[cell[1]][cell[0]] = self.LAVA
+                if self._bfs_distance_safe(ax, ay, gx, gy) is None:
+                    self._grid[cell[1]][cell[0]] = self.FLOOR
+                else:
+                    placed += 1
+
+    def _gen_scattered_walls(self, rng: np.random.Generator) -> None:
+        """Open layout with scattered walls matching TS generateLevel (useRooms=false branch)."""
+        self._init_border()
+        w, h = self._width, self._height
+        d = self._difficulty
+
+        # Wall count scales with difficulty: 2-6 at d=0, 4-13 at d=1
+        min_walls = int(2 + 2 * d)
+        max_walls = int(6 + 7 * d)
+        wall_count = min_walls + int(rng.integers(max(1, max_walls - min_walls + 1)))
+        for _ in range(wall_count):
+            wx = 1 + int(rng.integers(w - 2))
+            wy = 1 + int(rng.integers(h - 2))
+            self._grid[wy][wx] = self.WALL
+            if rng.random() < 0.4:
+                dx = 1 if rng.random() < 0.5 else 0
+                dy = 0 if dx == 1 else 1
+                for j in range(1, 1 + 1 + int(rng.integers(2))):
+                    ex, ey = wx + dx * j, wy + dy * j
+                    if 0 < ex < w - 1 and 0 < ey < h - 1:
+                        self._grid[ey][ex] = self.WALL
+
+        floors = self._get_floor_cells()
+        if len(floors) < 8:
+            self._gen_open_room(rng)
+            return
+
+        # Place agent and goal with max BFS distance
+        best_dist = -1
+        agent_pos = floors[0]
+        goal_pos = floors[-1]
+        pair_tries = min(20, len(floors) * 2)
+        for _ in range(pair_tries):
+            a = floors[int(rng.integers(len(floors)))]
+            b = floors[int(rng.integers(len(floors)))]
+            if a == b:
+                continue
+            dist = self._bfs_distance(a[0], a[1], b[0], b[1])
+            if dist is not None and dist > best_dist:
+                best_dist = dist
+                agent_pos = a
+                goal_pos = b
+
+        self._agent_pos = list(agent_pos)
+        self._grid[goal_pos[1]][goal_pos[0]] = self.GOAL
+        ax, ay = agent_pos
+        gx, gy = goal_pos
+
+        # Door on chokepoint (probability scales with difficulty)
+        has_door = False
+        if rng.random() < 0.5 * d:
+            chokepoints = [
+                (x, y)
+                for x, y in floors
+                if self._is_chokepoint(x, y) and (x, y) != agent_pos and (x, y) != goal_pos
+            ]
+            if chokepoints:
+                door_cell = chokepoints[int(rng.integers(len(chokepoints)))]
+                self._grid[door_cell[1]][door_cell[0]] = self.DOOR
+                reachable = [
+                    (x, y)
+                    for x, y in self._get_floor_cells()
+                    if (x, y) != agent_pos
+                    and (x, y) != goal_pos
+                    and self._bfs_distance(ax, ay, x, y) is not None
+                ]
+                if reachable:
+                    key_cell = reachable[int(rng.integers(len(reachable)))]
+                    self._grid[key_cell[1]][key_cell[0]] = self.KEY
+                    has_door = True
+                else:
+                    self._grid[door_cell[1]][door_cell[0]] = self.FLOOR
+
+        # Lava (probability scales with difficulty)
+        if rng.random() < 0.6 * d:
+            lava_count = 2 + int(rng.integers(4))
+            placed = 0
+            for _ in range(lava_count * 5):
+                if placed >= lava_count:
+                    break
+                candidates = [
+                    (x, y)
+                    for x, y in self._get_floor_cells()
+                    if (x, y) != agent_pos and (x, y) != goal_pos
+                ]
+                if not candidates:
+                    break
+                cell = candidates[int(rng.integers(len(candidates)))]
+                self._grid[cell[1]][cell[0]] = self.LAVA
+                solvable = (
+                    self._bfs_distance_safe(ax, ay, gx, gy) is not None
+                    if has_door
+                    else self._bfs_distance(ax, ay, gx, gy) is not None
+                )
+                if not solvable:
+                    self._grid[cell[1]][cell[0]] = self.FLOOR
+                else:
+                    placed += 1
+
+        # Final solvability check
+        if has_door:
+            if self._bfs_distance_safe(ax, ay, gx, gy) is None:
+                # Unsolvable — retry as open room
+                self._gen_open_room(rng)
+        else:
+            if self._bfs_distance(ax, ay, gx, gy) is None:
+                self._gen_open_room(rng)
 
     def _bfs_reachable(self, sx: int, sy: int) -> set[tuple[int, int]]:
         """BFS to find all floor cells reachable from (sx, sy), not crossing walls/doors."""

@@ -130,4 +130,4 @@ data/
 
 **record.py --min-steps** — Use `--min-steps 500000` to only record episodes from the best checkpoint, skipping early poorly-trained ones.
 
-**Training quality** — Default is 2M steps with [128, 128] network, bidirectional lava-safe subgoal-chain shaping (±0.05), multi-door procedural levels, and equal designed level sampling (all weights 1.0). Trained with 90% designed levels mixed in (`designed_level_prob=0.9`), `n_steps=512`, `ent_coef=0.05`. All 5 designed levels solved (verified by `test_e2e.py`).
+**Training quality** — Default is 10M steps with CNN feature extractor (one-hot grid → 2 conv layers → avg pool + FC), bidirectional lava-safe subgoal-chain shaping (±0.05), curriculum (difficulty ramps 0→1 over 40% of training), and weighted designed level sampling. Config: `designed_level_prob=0.15`, `n_steps=2048`, `batch_size=256`, `lr=3e-4`, `ent_coef=0.05`, `use_cnn=True`. All 10 designed levels + 1 holdout level solved, plus >= 40% generalization on 100 random procedural levels (verified by `test_e2e.py` and `test_generalization.py`).
