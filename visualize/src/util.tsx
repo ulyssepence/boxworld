@@ -440,7 +440,25 @@ export function useLiveInference() {
       }
       const preStepGrid = s.currentLevel.grid
       const gen = s.liveInference.generation
-      const { action, qValues } = await agent.selectAction(merged, s.liveInference.deterministic)
+
+      // If there's a solved recorded episode, replay its actions instead of running inference
+      const solvedEp = s.episodes.find((e) => e.totalReward > 0)
+      let action: t.Action
+      let qValues: t.QValues
+      if (solvedEp && s.liveInference.stepCount < solvedEp.steps.length) {
+        const recorded = solvedEp.steps[s.liveInference.stepCount]
+        action = recorded.action
+        qValues = recorded.qValues ?? {
+          [t.Action.Up]: 0,
+          [t.Action.Down]: 0,
+          [t.Action.Left]: 0,
+          [t.Action.Right]: 0,
+          [t.Action.Pickup]: 0,
+          [t.Action.Toggle]: 0,
+        }
+      } else {
+        ;({ action, qValues } = await agent.selectAction(merged, s.liveInference.deterministic))
+      }
       const newState = play.step(merged, action)
       dispatch({ type: 'LIVE_STEP', action, qValues, newState, preStepGrid, generation: gen })
       if (newState.done || s.liveInference.stepCount + 1 >= 200) {
