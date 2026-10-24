@@ -6,7 +6,7 @@
 # =============================================================================
 
 # --- Frontend build ---
-FROM oven/bun:1 AS frontend
+FROM oven/bun:1.4.4 AS frontend
 
 WORKDIR /app/visualize
 COPY visualize/package.json visualize/bun.lock ./
@@ -16,7 +16,7 @@ COPY visualize/static/ static/
 RUN bun run build
 
 # --- Runtime ---
-FROM oven/bun:1-slim
+FROM oven/bun:1.4.4-slim
 
 WORKDIR /app
 COPY --from=frontend /app/visualize/static/ visualize/static/
